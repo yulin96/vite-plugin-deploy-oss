@@ -48,7 +48,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     name: 'vite-plugin-deploy-oss',
     apply: 'build',
     enforce: 'post',
-    async config(config) {
+    config(config) {
       if (!open) return
       if (!accessKeyId || !accessKeySecret || !bucket || !region) {
         console.log(`:: ${chalk.red('缺少必要参数')}`)

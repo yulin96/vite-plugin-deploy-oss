@@ -4,6 +4,14 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "homepage": "https://github.com/yulin96/vite-plugin-deploy-oss",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yulin96/vite-plugin-deploy-oss"
+  },
+  "bugs": {
+    "url": "https://github.com/yulin96/vite-plugin-deploy-oss/issues"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.mjs",
