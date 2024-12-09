@@ -1,0 +1,17 @@
+{
+  "include": ["src"],
+  "exclude": ["node_modules"],
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "strictNullChecks": true,
+    "target": "ESNext",
+    "moduleResolution": "node",
+    "module": "ESNext",
+    "declaration": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "outDir": "dist"
+  }
+}
