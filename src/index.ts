@@ -32,8 +32,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     bucket,
     configBase,
     skip = '**/index.html',
-    uploadDir = '/',
-    overwrite = false,
+    uploadDir,
+    overwrite = true,
     secure = true,
     autoDelete = false,
     alias,
@@ -50,7 +50,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     enforce: 'post',
     config(config) {
       if (!open) return
-      if (!accessKeyId || !accessKeySecret || !bucket || !region) {
+      if (!accessKeyId || !accessKeySecret || !bucket || !region || !uploadDir) {
         console.log(`:: ${chalk.red('缺少必要参数')}`)
         return
       }
