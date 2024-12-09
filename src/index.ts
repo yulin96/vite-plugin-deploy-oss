@@ -83,7 +83,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
                 'x-oss-storage-class': 'Standard',
                 'x-oss-object-acl': 'default',
                 'Cache-Control': 'no-cache',
-                'x-oss-forbid-overwrite': overwrite ? 'true' : 'false',
+                ...(overwrite && {
+                  'x-oss-forbid-overwrite': 'false',
+                }),
               },
             })
             if (result.res.status === 200) {
