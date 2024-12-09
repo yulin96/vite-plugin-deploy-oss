@@ -21,6 +21,7 @@ export type vitePluginDeployOssOption = oss.Options & {
   autoDelete?: boolean
 
   skip?: string | string[]
+  open?: boolean
 }
 
 export default function vitePluginDeployOss(option: vitePluginDeployOssOption): Plugin {
@@ -36,6 +37,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     secure = true,
     autoDelete = false,
     alias,
+    open = true,
     ...props
   } = option || {}
 
@@ -47,6 +49,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     apply: 'build',
     enforce: 'post',
     async config(config) {
+      if (!open) return
       if (!accessKeyId || !accessKeySecret || !bucket || !region) {
         console.log(`:: ${chalk.red('缺少必要参数')}`)
         return
@@ -60,6 +63,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       sequential: true,
       order: 'post',
       async handler() {
+        if (!open) return
         if (!upload) return
         console.log(`:: ${chalk.blue('开始上传文件')} => \n`)
         const client = new oss({ region, accessKeyId, accessKeySecret, secure, bucket, ...props })
