@@ -31,9 +31,7 @@
   "devDependencies": {
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
-  },
-  "peerDependencies": {
+    "typescript": "^5.7.2",
     "vite": "^6.0.3"
   },
   "dependencies": {

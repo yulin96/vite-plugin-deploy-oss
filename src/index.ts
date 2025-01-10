@@ -74,7 +74,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
         for (const file of files) {
           const filePath = normalizePath(file)
-          const name = filePath.replace('dist', `${uploadDir}`)
+          const name = filePath.replace('dist', `${uploadDir}`).replace(/\/\//, '/')
 
           try {
             const result = await client.put(name, filePath, {

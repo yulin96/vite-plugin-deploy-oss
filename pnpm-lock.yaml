@@ -26,9 +26,6 @@ importers:
       glob:
         specifier: ^11.0.0
         version: 11.0.0
-      vite:
-        specifier: ^6.0.3
-        version: 6.0.3(@types/node@22.10.1)
     devDependencies:
       '@types/node':
         specifier: ^22.10.1
@@ -39,6 +36,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.7.2
+      vite:
+        specifier: ^6.0.3
+        version: 6.0.3(@types/node@22.10.1)
 
 packages:
 
