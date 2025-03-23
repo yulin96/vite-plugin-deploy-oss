@@ -22,8 +22,6 @@ export type vitePluginDeployOssOption = oss.Options & {
 
   skip?: string | string[]
   open?: boolean
-
-  isCache?: boolean
 }
 
 export default function vitePluginDeployOss(option: vitePluginDeployOssOption): Plugin {
@@ -40,7 +38,6 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     autoDelete = false,
     alias,
     open = true,
-    isCache = false,
     ...props
   } = option || {}
 
@@ -85,8 +82,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
               headers: {
                 'x-oss-storage-class': 'Standard',
                 'x-oss-object-acl': 'default',
-
-                ...(isCache && { 'Cache-Control': 'no-cache' }),
+                'Cache-Control': 'public, max-age=31536000, immutable',
                 ...(overwrite && {
                   'x-oss-forbid-overwrite': 'false',
                 }),
