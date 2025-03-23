@@ -82,7 +82,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
               headers: {
                 'x-oss-storage-class': 'Standard',
                 'x-oss-object-acl': 'default',
-                'Cache-Control': 'public, max-age=31536000, immutable',
+                'Cache-Control': 'public, max-age=3600, immutable',
                 ...(overwrite && {
                   'x-oss-forbid-overwrite': 'false',
                 }),
