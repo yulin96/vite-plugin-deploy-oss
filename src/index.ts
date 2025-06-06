@@ -61,6 +61,10 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
   let upload = false
   let outDir = ''
+  // 增加控制台监听器限制，防止警告
+  const maxListeners = Math.max(20, concurrency * 3)
+  process.stdout?.setMaxListeners?.(maxListeners)
+  process.stderr?.setMaxListeners?.(maxListeners)
 
   // 参数验证函数
   const validateOptions = (): string[] => {
@@ -71,9 +75,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     if (!region) errors.push('region is required')
     if (!uploadDir) errors.push('uploadDir is required')
     return errors
-  }
-
-  // 重试机制的上传函数
+  } // 重试机制的上传函数
   const uploadFileWithRetry = async (
     client: oss,
     name: string,
@@ -96,8 +98,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
         if (result.res.status === 200) {
           const url = alias ? alias + name : result.url
-          console.log(`${chalk.green('✓')} ${filePath}`)
-          console.log(`=> ${chalk.cyan(url)}`)
+          console.log(`${chalk.green('✓')} ${filePath} => ${chalk.cyan(url)}`)
 
           if (autoDelete) {
             try {
@@ -124,9 +125,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     }
 
     return { success: false, file: filePath, error: new Error('Max retries exceeded') }
-  }
-
-  // 并发上传函数
+  } // 并发上传函数
   const uploadFilesInBatches = async (
     client: oss,
     files: string[],
@@ -136,7 +135,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const totalFiles = files.length
     let completed = 0
 
-    // 分批处理文件
+    // 分批处理文件，避免过多并发导致监听器警告
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, i + batchSize)
 
