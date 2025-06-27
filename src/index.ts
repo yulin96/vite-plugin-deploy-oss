@@ -59,6 +59,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     ...props
   } = option || {}
 
+  let buildFailed = false
+
   let upload = false
   let outDir = ''
   // 增加控制台监听器限制，防止警告
@@ -164,8 +166,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     name: 'vite-plugin-deploy-oss',
     apply: 'build',
     enforce: 'post',
+    buildEnd(error) {
+      if (error) buildFailed = true
+    },
     config(config) {
-      if (!open) return
+      if (!open || buildFailed) return
 
       const validationErrors = validateOptions()
       if (validationErrors.length > 0) {
@@ -182,7 +187,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       sequential: true,
       order: 'post',
       async handler() {
-        if (!open || !upload) return
+        if (!open || !upload || buildFailed) return
 
         console.log(`${chalk.blue('🚀 开始上传文件到 OSS...')}\n`)
 
