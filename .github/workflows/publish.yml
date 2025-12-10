@@ -22,6 +22,7 @@ jobs:
         with:
           run_install: false
           standalone: true
+          version: 10
 
       - name: Setup Node
         uses: actions/setup-node@v4
