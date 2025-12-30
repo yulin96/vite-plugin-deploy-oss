@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite'
-import vitePluginDeployOss from './src'
+import vitePluginDeployOss from '../src'
 
 export default defineConfig({
   plugins: [
@@ -23,5 +23,10 @@ export default defineConfig({
 
   build: {
     outDir: '__dist__',
+    rollupOptions: {
+      input: {
+        main: './index.html',
+      },
+    },
   },
 })
