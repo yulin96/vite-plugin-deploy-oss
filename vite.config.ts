@@ -14,7 +14,7 @@ export default defineConfig({
       uploadDir: `/test/__test/`,
       skip: ['**/*.html', '**/pluginWebUpdateNotice/**'],
       overwrite: true,
-      autoDelete: true,
+      autoDelete: false,
 
       // 修改打包后的资源路径
       configBase: `${process.env.zBucketAlias || ''}/test/__test/`,
@@ -22,7 +22,6 @@ export default defineConfig({
   ],
 
   build: {
-    outDir: 'assets',
+    outDir: '__dist__',
   },
-  
 })
