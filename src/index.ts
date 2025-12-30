@@ -234,6 +234,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           const failedCount = results.length - successCount
           const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 
+          process.stdout.write('\x1b[2J\x1b[0f')
           console.log('\n' + chalk.gray('─'.repeat(40)) + '\n')
 
           if (failedCount === 0) {
