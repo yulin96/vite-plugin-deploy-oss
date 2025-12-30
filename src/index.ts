@@ -137,9 +137,6 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const totalFiles = files.length
     let completed = 0
 
-    process.stdout.write('\x1b[2J\x1b[0f')
-    console.log('\n')
-
     const spinner = ora('准备上传...').start()
 
     const updateSpinner = (currentFile: string) => {
@@ -190,6 +187,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     config(config) {
       if (!open || buildFailed) return
 
+      process.stdout.write('\x1b[2J\x1b[0f')
+
       const validationErrors = validateOptions()
       if (validationErrors.length > 0) {
         console.log(`${chalk.red('✗ 配置错误:')}\n${validationErrors.map((err) => `  - ${err}`).join('\n')}`)
@@ -220,6 +219,14 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           return
         }
 
+        process.stdout.write('\x1b[2J\x1b[0f')
+        console.log(chalk.cyan(`\n🚀 OSS 部署开始\n`))
+        console.log(`${chalk.gray('Bucket:')}   ${chalk.green(bucket)}`)
+        console.log(`${chalk.gray('Region:')}   ${chalk.green(region)}`)
+        console.log(`${chalk.gray('Source:')}   ${chalk.yellow(outDir)}`)
+        console.log(`${chalk.gray('Target:')}   ${chalk.yellow(uploadDir)}`)
+        console.log(`${chalk.gray('Files:')}    ${chalk.blue(files.length)}\n`)
+
         try {
           const results = await uploadFilesInBatches(client, files, concurrency)
 
@@ -227,23 +234,28 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           const failedCount = results.length - successCount
           const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 
-          let stats = `${chalk.green('✔ 成功:')} ${successCount}  ${chalk.blue('⏱ 耗时:')} ${duration}s`
-          if (failedCount > 0) {
-            stats += `  ${chalk.red('✗ 失败:')} ${failedCount}`
+          console.log('\n' + chalk.gray('─'.repeat(40)) + '\n')
+
+          if (failedCount === 0) {
+            console.log(`${chalk.green('🎉 部署成功!')}`)
+          } else {
+            console.log(`${chalk.yellow('⚠ 部署完成但存在错误')}`)
           }
-          console.log(stats)
+
+          console.log(`\n${chalk.gray('统计:')}`)
+          console.log(` ${chalk.green('✔')} 成功: ${chalk.bold(successCount)}`)
+          if (failedCount > 0) {
+            console.log(` ${chalk.red('✗')} 失败: ${chalk.bold(failedCount)}`)
+          }
+          console.log(` ${chalk.blue('⏱')} 耗时: ${chalk.bold(duration)}s`)
+
+          console.log('')
 
           // 清理空目录
           try {
             deleteEmpty(resolve(outDir))
           } catch (error) {
             console.warn(`${chalk.yellow('⚠ 清理空目录失败:')} ${error}`)
-          }
-
-          if (failedCount === 0) {
-            console.log(`\n${chalk.green('🎉 所有文件上传完成!')}\n`)
-          } else {
-            console.log(`\n${chalk.yellow('⚠ 部分文件上传失败，请检查日志')}\n`)
           }
         } catch (error) {
           console.log(`\n${chalk.red('❌ 上传过程中发生错误:')} ${error}\n`)
