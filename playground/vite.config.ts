@@ -11,10 +11,10 @@ export default defineConfig({
       bucket: process.env.zBucket || '',
       region: 'oss-cn-beijing',
       alias: process.env.zBucketAlias || '',
-      uploadDir: `/test/__test/`,
+      uploadDir: `test/__test/`,
       skip: ['**/*.html', '**/pluginWebUpdateNotice/**'],
       overwrite: true,
-      autoDelete: false,
+      autoDelete: true,
 
       // 修改打包后的资源路径
       configBase: `${process.env.zBucketAlias || ''}/test/__test/`,

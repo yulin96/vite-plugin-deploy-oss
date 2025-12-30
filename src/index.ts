@@ -4,10 +4,13 @@ import deleteEmpty from 'delete-empty'
 import { globSync } from 'glob'
 import { unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
+import ora from 'ora'
 import { normalizePath, Plugin } from 'vite'
 
-export interface vitePluginDeployOssOption
-  extends Omit<oss.Options, 'accessKeyId' | 'accessKeySecret' | 'bucket' | 'region'> {
+export interface vitePluginDeployOssOption extends Omit<
+  oss.Options,
+  'accessKeyId' | 'accessKeySecret' | 'bucket' | 'region'
+> {
   configBase?: string
 
   accessKeyId: string
@@ -29,7 +32,6 @@ export interface vitePluginDeployOssOption
   // 新增配置项
   concurrency?: number // 并发上传数量
   retryTimes?: number // 重试次数
-  showProgress?: boolean // 显示上传进度
 }
 
 interface UploadResult {
@@ -55,7 +57,6 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     noCache = false,
     concurrency = 5,
     retryTimes = 3,
-    showProgress = true,
     ...props
   } = option || {}
 
@@ -82,7 +83,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     client: oss,
     name: string,
     filePath: string,
-    maxRetries: number = retryTimes
+    maxRetries: number = retryTimes,
   ): Promise<UploadResult> => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -100,7 +101,6 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
         if (result.res.status === 200) {
           const url = alias ? alias + name : result.url
-          console.log(`${chalk.green('✓')} ${filePath} => ${chalk.cyan(url)}`)
 
           if (autoDelete) {
             try {
@@ -131,11 +131,26 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
   const uploadFilesInBatches = async (
     client: oss,
     files: string[],
-    batchSize: number = concurrency
+    batchSize: number = concurrency,
   ): Promise<UploadResult[]> => {
     const results: UploadResult[] = []
     const totalFiles = files.length
     let completed = 0
+
+    process.stdout.write('\x1b[2J\x1b[0f')
+    console.log('\n')
+
+    const spinner = ora('准备上传...').start()
+
+    const updateSpinner = (currentFile: string) => {
+      const percentage = Math.round((completed / totalFiles) * 100)
+      const width = 30
+      const filled = Math.round((width * completed) / totalFiles)
+      const empty = width - filled
+      const bar = chalk.green('█'.repeat(filled)) + chalk.gray('░'.repeat(empty))
+
+      spinner.text = `正在上传: ${chalk.cyan(currentFile)}\n${bar} ${percentage}% (${completed}/${totalFiles})`
+    }
 
     // 分批处理文件，避免过多并发导致监听器警告
     for (let i = 0; i < files.length; i += batchSize) {
@@ -145,13 +160,12 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         const filePath = normalizePath(file)
         const name = filePath.replace(outDir, uploadDir).replace(/\/\//g, '/')
 
+        updateSpinner(name)
+
         const result = await uploadFileWithRetry(client, name, filePath)
         completed++
 
-        if (showProgress) {
-          const progress = Math.round((completed / totalFiles) * 100)
-          console.log(`${chalk.blue('进度:')} ${progress}% (${completed}/${totalFiles})`)
-        }
+        updateSpinner(name)
 
         return result
       })
@@ -159,6 +173,10 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       const batchResults = await Promise.all(batchPromises)
       results.push(...batchResults)
     }
+
+    const width = 30
+    const bar = chalk.green('█'.repeat(width))
+    spinner.succeed(`所有文件上传完成!\n${bar} 100% (${totalFiles}/${totalFiles})`)
 
     return results
   }
@@ -189,8 +207,6 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       async handler() {
         if (!open || !upload || buildFailed) return
 
-        console.log(`${chalk.blue('🚀 开始上传文件到 OSS...')}\n`)
-
         const startTime = Date.now()
         const client = new oss({ region, accessKeyId, accessKeySecret, secure, bucket, ...props })
 
@@ -204,8 +220,6 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           return
         }
 
-        console.log(`${chalk.blue('📁 找到')} ${files.length} ${chalk.blue('个文件需要上传')}`)
-
         try {
           const results = await uploadFilesInBatches(client, files, concurrency)
 
@@ -213,12 +227,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           const failedCount = results.length - successCount
           const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 
-          console.log(`\n${chalk.blue('📊 上传统计:')}`)
-          console.log(`  ${chalk.green('✓ 成功:')} ${successCount}`)
+          let stats = `${chalk.green('✔ 成功:')} ${successCount}  ${chalk.blue('⏱ 耗时:')} ${duration}s`
           if (failedCount > 0) {
-            console.log(`  ${chalk.red('✗ 失败:')} ${failedCount}`)
+            stats += `  ${chalk.red('✗ 失败:')} ${failedCount}`
           }
-          console.log(`  ${chalk.blue('⏱ 耗时:')} ${duration}s`)
+          console.log(stats)
 
           // 清理空目录
           try {
