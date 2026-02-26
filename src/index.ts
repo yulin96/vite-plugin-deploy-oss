@@ -2,7 +2,7 @@ import oss from 'ali-oss'
 import chalk from 'chalk'
 import deleteEmpty from 'delete-empty'
 import { globSync } from 'glob'
-import { unlinkSync } from 'node:fs'
+import { stat, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import ora from 'ora'
 import { normalizePath, Plugin } from 'vite'
@@ -32,6 +32,7 @@ export interface vitePluginDeployOssOption extends Omit<
   // 新增配置项
   concurrency?: number // 并发上传数量
   retryTimes?: number // 重试次数
+  multipartThreshold?: number // 超过该大小（字节）走分片上传
 }
 
 interface UploadResult {
@@ -57,6 +58,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     noCache = false,
     concurrency = 5,
     retryTimes = 3,
+    multipartThreshold = 10 * 1024 * 1024,
     ...props
   } = option || {}
 
@@ -64,10 +66,16 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
   let upload = false
   let outDir = ''
+  const useInteractiveOutput =
+    Boolean(process.stdout?.isTTY) && Boolean(process.stderr?.isTTY) && !process.env.CI
   // 增加控制台监听器限制，防止警告
   const maxListeners = Math.max(20, concurrency * 3)
   process.stdout?.setMaxListeners?.(maxListeners)
   process.stderr?.setMaxListeners?.(maxListeners)
+  const clearScreen = () => {
+    if (!useInteractiveOutput) return
+    process.stdout.write('\x1b[2J\x1b[0f')
+  }
 
   // 参数验证函数
   const validateOptions = (): string[] => {
@@ -85,26 +93,43 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     filePath: string,
     maxRetries: number = retryTimes,
   ): Promise<UploadResult> => {
+    let shouldUseMultipart = false
+    try {
+      const fileStats = await stat(filePath)
+      shouldUseMultipart = fileStats.size >= multipartThreshold
+    } catch (error) {
+      console.log(
+        `${chalk.red('✗')} ${filePath} => 无法读取文件信息: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return { success: false, file: filePath, error: error as Error }
+    }
+    const headers = {
+      'x-oss-storage-class': 'Standard',
+      'x-oss-object-acl': 'default',
+      'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400, immutable',
+      ...(overwrite && {
+        'x-oss-forbid-overwrite': 'false',
+      }),
+    }
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const result = await client.put(name, filePath, {
-          timeout: 600000,
-          headers: {
-            'x-oss-storage-class': 'Standard',
-            'x-oss-object-acl': 'default',
-            'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400, immutable',
-            ...(overwrite && {
-              'x-oss-forbid-overwrite': 'false',
-            }),
-          },
-        })
+        const result = shouldUseMultipart
+          ? await client.multipartUpload(name, filePath, {
+              timeout: 600000,
+              partSize: 1024 * 1024,
+              parallel: Math.max(1, Math.min(concurrency, 4)),
+              headers,
+            })
+          : await client.put(name, filePath, {
+              timeout: 600000,
+              headers,
+            })
 
         if (result.res.status === 200) {
-          const url = alias ? alias + name : result.url
-
           if (autoDelete) {
             try {
-              unlinkSync(filePath)
+              await unlink(filePath)
             } catch (error) {
               console.warn(`${chalk.yellow('⚠')} 删除本地文件失败: ${filePath}`)
             }
@@ -131,49 +156,65 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
   const uploadFilesInBatches = async (
     client: oss,
     files: string[],
-    batchSize: number = concurrency,
+    windowSize: number = concurrency,
   ): Promise<UploadResult[]> => {
-    const results: UploadResult[] = []
+    const results: UploadResult[] = new Array(files.length)
     const totalFiles = files.length
     let completed = 0
 
-    const spinner = ora('准备上传...').start()
+    const spinner = useInteractiveOutput ? ora('准备上传...').start() : null
+    const reportEvery = Math.max(1, Math.ceil(totalFiles / 10))
+    let activeFile = ''
 
-    const updateSpinner = (currentFile: string) => {
+    const updateProgress = () => {
       const percentage = Math.round((completed / totalFiles) * 100)
+
+      if (!spinner) {
+        if (completed === totalFiles || completed % reportEvery === 0) {
+          console.log(`${chalk.gray('Progress:')} ${completed}/${totalFiles} (${percentage}%)`)
+        }
+        return
+      }
+
       const width = 30
       const filled = Math.round((width * completed) / totalFiles)
       const empty = width - filled
       const bar = chalk.green('█'.repeat(filled)) + chalk.gray('░'.repeat(empty))
 
-      spinner.text = `正在上传: ${chalk.cyan(currentFile)}\n${bar} ${percentage}% (${completed}/${totalFiles})`
+      spinner.text = `正在上传: ${chalk.cyan(activeFile)}\n${bar} ${percentage}% (${completed}/${totalFiles})`
     }
 
-    // 分批处理文件，避免过多并发导致监听器警告
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize)
+    let currentIndex = 0
+    const safeWindowSize = Math.max(1, Math.min(windowSize, totalFiles))
 
-      const batchPromises = batch.map(async (file) => {
+    const worker = async () => {
+      while (true) {
+        const index = currentIndex++
+        if (index >= totalFiles) return
+
+        const file = files[index]
         const filePath = normalizePath(file)
         const name = filePath.replace(outDir, uploadDir).replace(/\/\//g, '/')
 
-        updateSpinner(name)
+        activeFile = name
+        updateProgress()
 
         const result = await uploadFileWithRetry(client, name, filePath)
         completed++
-
-        updateSpinner(name)
-
-        return result
-      })
-
-      const batchResults = await Promise.all(batchPromises)
-      results.push(...batchResults)
+        results[index] = result
+        updateProgress()
+      }
     }
 
-    const width = 30
-    const bar = chalk.green('█'.repeat(width))
-    spinner.succeed(`所有文件上传完成!\n${bar} 100% (${totalFiles}/${totalFiles})`)
+    await Promise.all(Array.from({ length: safeWindowSize }, () => worker()))
+
+    if (spinner) {
+      const width = 30
+      const bar = chalk.green('█'.repeat(width))
+      spinner.succeed(`所有文件上传完成!\n${bar} 100% (${totalFiles}/${totalFiles})`)
+    } else {
+      console.log(`${chalk.green('✔')} 所有文件上传完成 (${totalFiles}/${totalFiles})`)
+    }
 
     return results
   }
@@ -187,7 +228,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     config(config) {
       if (!open || buildFailed) return
 
-      process.stdout.write('\x1b[2J\x1b[0f')
+      clearScreen()
 
       const validationErrors = validateOptions()
       if (validationErrors.length > 0) {
@@ -219,12 +260,13 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           return
         }
 
-        process.stdout.write('\x1b[2J\x1b[0f')
+        clearScreen()
         console.log(chalk.cyan(`\n🚀 OSS 部署开始\n`))
         console.log(`${chalk.gray('Bucket:')}   ${chalk.green(bucket)}`)
         console.log(`${chalk.gray('Region:')}   ${chalk.green(region)}`)
         console.log(`${chalk.gray('Source:')}   ${chalk.yellow(outDir)}`)
         console.log(`${chalk.gray('Target:')}   ${chalk.yellow(uploadDir)}`)
+        if (alias) console.log(`${chalk.gray('Alias:')}    ${chalk.green(alias)}`)
         console.log(`${chalk.gray('Files:')}    ${chalk.blue(files.length)}\n`)
 
         try {
@@ -234,7 +276,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           const failedCount = results.length - successCount
           const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 
-          process.stdout.write('\x1b[2J\x1b[0f')
+          clearScreen()
           console.log('\n' + chalk.gray('─'.repeat(40)) + '\n')
 
           if (failedCount === 0) {
