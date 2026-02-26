@@ -21,8 +21,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "pack": "pnpm run build && pnpm pack",
-    "build:test": "cd playground && vite build"
+    "pack": "pnpm run build && pnpm pack"
   },
   "keywords": [
     "vite-plugin",
