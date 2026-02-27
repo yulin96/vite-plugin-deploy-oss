@@ -5,7 +5,7 @@ import { globSync } from 'glob'
 import { stat, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import ora from 'ora'
-import { normalizePath, Plugin } from 'vite'
+import { normalizePath, Plugin, type ResolvedConfig } from 'vite'
 
 export interface vitePluginDeployOssOption extends Omit<
   oss.Options,
@@ -28,11 +28,11 @@ export interface vitePluginDeployOssOption extends Omit<
   open?: boolean
 
   noCache?: boolean
+  failOnError?: boolean
 
-  // 新增配置项
-  concurrency?: number // 并发上传数量
-  retryTimes?: number // 重试次数
-  multipartThreshold?: number // 超过该大小（字节）走分片上传
+  concurrency?: number
+  retryTimes?: number
+  multipartThreshold?: number
 }
 
 interface UploadResult {
@@ -40,6 +40,11 @@ interface UploadResult {
   file: string
   error?: Error
 }
+
+const normalizeObjectKey = (targetDir: string, relativeFilePath: string): string =>
+  normalizePath(`${targetDir}/${relativeFilePath}`)
+    .replace(/\/{2,}/g, '/')
+    .replace(/^\/+/, '')
 
 export default function vitePluginDeployOss(option: vitePluginDeployOssOption): Plugin {
   const {
@@ -56,6 +61,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     alias,
     open = true,
     noCache = false,
+    failOnError = true,
     concurrency = 5,
     retryTimes = 3,
     multipartThreshold = 10 * 1024 * 1024,
@@ -65,19 +71,15 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
   let buildFailed = false
 
   let upload = false
-  let outDir = ''
+  let outDir = normalizePath(resolve('dist'))
+  let resolvedConfig: ResolvedConfig | null = null
   const useInteractiveOutput =
     Boolean(process.stdout?.isTTY) && Boolean(process.stderr?.isTTY) && !process.env.CI
-  // 增加控制台监听器限制，防止警告
-  const maxListeners = Math.max(20, concurrency * 3)
-  process.stdout?.setMaxListeners?.(maxListeners)
-  process.stderr?.setMaxListeners?.(maxListeners)
   const clearScreen = () => {
     if (!useInteractiveOutput) return
     process.stdout.write('\x1b[2J\x1b[0f')
   }
 
-  // 参数验证函数
   const validateOptions = (): string[] => {
     const errors: string[] = []
     if (!accessKeyId) errors.push('accessKeyId is required')
@@ -85,8 +87,13 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     if (!bucket) errors.push('bucket is required')
     if (!region) errors.push('region is required')
     if (!uploadDir) errors.push('uploadDir is required')
+    if (!Number.isInteger(retryTimes) || retryTimes < 1) errors.push('retryTimes must be >= 1')
+    if (!Number.isInteger(concurrency) || concurrency < 1) errors.push('concurrency must be >= 1')
+    if (!Number.isFinite(multipartThreshold) || multipartThreshold <= 0)
+      errors.push('multipartThreshold must be > 0')
     return errors
-  } // 重试机制的上传函数
+  }
+
   const uploadFileWithRetry = async (
     client: oss,
     name: string,
@@ -107,9 +114,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       'x-oss-storage-class': 'Standard',
       'x-oss-object-acl': 'default',
       'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400, immutable',
-      ...(overwrite && {
-        'x-oss-forbid-overwrite': 'false',
-      }),
+      'x-oss-forbid-overwrite': overwrite ? 'false' : 'true',
     }
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -152,7 +157,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     }
 
     return { success: false, file: filePath, error: new Error('Max retries exceeded') }
-  } // 并发上传函数
+  }
+
   const uploadFilesInBatches = async (
     client: oss,
     files: string[],
@@ -165,13 +171,16 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const spinner = useInteractiveOutput ? ora('准备上传...').start() : null
     const reportEvery = Math.max(1, Math.ceil(totalFiles / 10))
     let activeFile = ''
+    let lastReportedCompleted = -1
 
     const updateProgress = () => {
       const percentage = Math.round((completed / totalFiles) * 100)
 
       if (!spinner) {
+        if (completed === lastReportedCompleted) return
         if (completed === totalFiles || completed % reportEvery === 0) {
           console.log(`${chalk.gray('Progress:')} ${completed}/${totalFiles} (${percentage}%)`)
+          lastReportedCompleted = completed
         }
         return
       }
@@ -192,12 +201,14 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         const index = currentIndex++
         if (index >= totalFiles) return
 
-        const file = files[index]
-        const filePath = normalizePath(file)
-        const name = filePath.replace(outDir, uploadDir).replace(/\/\//g, '/')
+        const relativeFilePath = normalizePath(files[index])
+        const filePath = normalizePath(resolve(outDir, relativeFilePath))
+        const name = normalizeObjectKey(uploadDir, relativeFilePath)
 
-        activeFile = name
-        updateProgress()
+        if (spinner) {
+          activeFile = name
+          updateProgress()
+        }
 
         const result = await uploadFileWithRetry(client, name, filePath)
         completed++
@@ -238,22 +249,26 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
       upload = true
       config.base = configBase || config.base
-      outDir = config.build?.outDir || 'dist'
       return config
+    },
+    configResolved(config) {
+      resolvedConfig = config
+      outDir = normalizePath(resolve(config.root, config.build.outDir))
     },
     closeBundle: {
       sequential: true,
       order: 'post',
       async handler() {
-        if (!open || !upload || buildFailed) return
+        if (!open || !upload || buildFailed || !resolvedConfig) return
 
         const startTime = Date.now()
         const client = new oss({ region, accessKeyId, accessKeySecret, secure, bucket, ...props })
 
-        const files = globSync(outDir + '/**/*', {
+        const files = globSync('**/*', {
+          cwd: outDir,
           nodir: true,
           ignore: Array.isArray(skip) ? skip : [skip],
-        })
+        }).map((file) => normalizePath(file))
 
         if (files.length === 0) {
           console.log(`${chalk.yellow('⚠ 没有找到需要上传的文件')}`)
@@ -294,14 +309,20 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
           console.log('')
 
-          // 清理空目录
           try {
-            deleteEmpty(resolve(outDir))
+            await deleteEmpty(resolve(outDir))
           } catch (error) {
             console.warn(`${chalk.yellow('⚠ 清理空目录失败:')} ${error}`)
           }
+
+          if (failedCount > 0 && failOnError) {
+            throw new Error(`Failed to upload ${failedCount} of ${results.length} files`)
+          }
         } catch (error) {
           console.log(`\n${chalk.red('❌ 上传过程中发生错误:')} ${error}\n`)
+          if (failOnError) {
+            throw error instanceof Error ? error : new Error(String(error))
+          }
         }
       },
     },

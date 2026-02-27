@@ -37,5 +37,8 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Publish to npm (Trusted Publishing)
         run: pnpm publish --access public --provenance --no-git-checks

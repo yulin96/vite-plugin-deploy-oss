@@ -4,25 +4,33 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "type": "commonjs",
   "homepage": "https://github.com/yulin96/vite-plugin-deploy-oss",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yulin96/vite-plugin-deploy-oss"
+    "url": "git+https://github.com/yulin96/vite-plugin-deploy-oss.git"
   },
   "bugs": {
     "url": "https://github.com/yulin96/vite-plugin-deploy-oss/issues"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
   },
   "scripts": {
     "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json",
     "pack": "pnpm run build && pnpm pack",
-    "build:test": "cd playground && vite build"
+    "build:test": "cd playground && vite build",
+    "build:test:deploy": "cd playground && vite build --mode deploy"
   },
   "keywords": [
     "vite-plugin",
@@ -37,6 +45,8 @@
   "license": "MIT",
   "description": "将dist目录下的文件上传到阿里云oss",
   "devDependencies": {
+    "@types/ali-oss": "^6.23.3",
+    "@types/delete-empty": "^3.0.5",
     "@types/node": "^22.19.11",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
@@ -45,8 +55,6 @@
     "vite": "^6.0.3 || ^7"
   },
   "dependencies": {
-    "@types/ali-oss": "^6.23.3",
-    "@types/delete-empty": "^3.0.5",
     "ali-oss": "^6.23.0",
     "chalk": "^5.6.2",
     "delete-empty": "^3.0.0",

@@ -24,15 +24,27 @@ export default {
   plugins: [
     // 在最后一个插件中使用
     vitePluginDeployOss({
+      // 建议按环境变量开关上传，避免本地/CI误上传
+      open: process.env.DEPLOY_OSS === '1',
+
       accessKeyId: '***',
       accessKeySecret: '***',
       bucket: '***',
       region: '***',
       uploadDir: `H5/zz/test`,
       skip: ['**/index.html'],
+
+      // 默认 true：有上传失败时抛错并让构建失败
+      failOnError: true,
+
       // 修改打包后的资源路径
       configBase: `https://oss.eventnet.cn/H5/zz/test/`,
     }),
   ],
 }
 ```
+
+## 说明
+
+- `open` 默认 `true`，建议通过环境变量控制开关（例如 `DEPLOY_OSS=1` 时再上传）。
+- `failOnError` 默认 `true`，上传有失败会抛错，适合 CI 场景保证发布质量。

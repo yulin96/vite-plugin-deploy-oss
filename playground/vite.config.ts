@@ -1,32 +1,36 @@
 import { defineConfig } from 'vite'
 import vitePluginDeployOss from '../src'
 
-export default defineConfig({
-  plugins: [
-    vitePluginDeployOss({
-      open: true,
+export default defineConfig(({ mode }) => {
+  const shouldDeploy = mode === 'deploy' || process.env.DEPLOY_OSS === '1'
 
-      accessKeyId: process.env.zAccessKeyId || '',
-      accessKeySecret: process.env.zAccessKeySecret || '',
-      bucket: process.env.zBucket || '',
-      region: 'oss-cn-beijing',
-      alias: process.env.zBucketAlias || '',
-      uploadDir: `test/__test/`,
-      skip: ['**/*.html', '**/pluginWebUpdateNotice/**'],
-      overwrite: true,
-      autoDelete: true,
+  return {
+    plugins: [
+      vitePluginDeployOss({
+        open: shouldDeploy,
 
-      // 修改打包后的资源路径
-      configBase: `${process.env.zBucketAlias || ''}/test/__test/`,
-    }),
-  ],
+        accessKeyId: process.env.zAccessKeyId || '',
+        accessKeySecret: process.env.zAccessKeySecret || '',
+        bucket: process.env.zBucket || '',
+        region: 'oss-cn-beijing',
+        alias: process.env.zBucketAlias || '',
+        uploadDir: `test/__test/`,
+        skip: ['**/*.html', '**/pluginWebUpdateNotice/**'],
+        overwrite: true,
+        autoDelete: true,
 
-  build: {
-    outDir: '__dist__',
-    rollupOptions: {
-      input: {
-        main: './index.html',
+        // 修改打包后的资源路径
+        configBase: `${process.env.zBucketAlias || ''}/test/__test/`,
+      }),
+    ],
+
+    build: {
+      outDir: '__dist__',
+      rollupOptions: {
+        input: {
+          main: './index.html',
+        },
       },
     },
-  },
+  }
 })
