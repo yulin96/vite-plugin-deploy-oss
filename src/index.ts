@@ -26,6 +26,7 @@ export interface vitePluginDeployOssOption extends Omit<
 
   skip?: string | string[]
   open?: boolean
+  fancy?: boolean
 
   noCache?: boolean
   failOnError?: boolean
@@ -38,13 +39,74 @@ export interface vitePluginDeployOssOption extends Omit<
 interface UploadResult {
   success: boolean
   file: string
+  name: string
+  size: number
+  retries: number
   error?: Error
+}
+
+interface UploadTask {
+  filePath: string
+  name: string
+  size: number
 }
 
 const normalizeObjectKey = (targetDir: string, relativeFilePath: string): string =>
   normalizePath(`${targetDir}/${relativeFilePath}`)
     .replace(/\/{2,}/g, '/')
     .replace(/^\/+/, '')
+
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = 0
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+
+  const digits = value >= 100 || unitIndex === 0 ? 0 : 1
+  return `${value.toFixed(digits)} ${units[unitIndex]}`
+}
+
+const formatDuration = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds < 0) return '--'
+
+  const rounded = Math.round(seconds)
+  const mins = Math.floor(rounded / 60)
+  const secs = rounded % 60
+
+  if (mins === 0) return `${secs}s`
+  return `${mins}m${String(secs).padStart(2, '0')}s`
+}
+
+const trimMiddle = (text: string, maxLength: number): string => {
+  if (text.length <= maxLength) return text
+  if (maxLength <= 10) return text.slice(0, maxLength)
+
+  const leftLength = Math.floor((maxLength - 3) / 2)
+  const rightLength = maxLength - 3 - leftLength
+  return `${text.slice(0, leftLength)}...${text.slice(-rightLength)}`
+}
+
+const buildCapsuleBar = (ratio: number, width = 30): string => {
+  const safeRatio = Math.max(0, Math.min(1, ratio))
+  if (width <= 0) return ''
+
+  if (safeRatio >= 1) {
+    return chalk.green('█'.repeat(width))
+  }
+
+  const pointerIndex = Math.min(width - 1, Math.floor(width * safeRatio))
+  const done = pointerIndex > 0 ? chalk.green('█'.repeat(pointerIndex)) : ''
+  const pointer = chalk.cyanBright('▸')
+  const pending = pointerIndex < width - 1 ? chalk.gray('░'.repeat(width - pointerIndex - 1)) : ''
+
+  return `${done}${pointer}${pending}`
+}
 
 export default function vitePluginDeployOss(option: vitePluginDeployOssOption): Plugin {
   const {
@@ -60,6 +122,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     autoDelete = false,
     alias,
     open = true,
+    fancy = true,
     noCache = false,
     failOnError = true,
     concurrency = 5,
@@ -74,7 +137,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
   let outDir = normalizePath(resolve('dist'))
   let resolvedConfig: ResolvedConfig | null = null
   const useInteractiveOutput =
-    Boolean(process.stdout?.isTTY) && Boolean(process.stderr?.isTTY) && !process.env.CI
+    fancy && Boolean(process.stdout?.isTTY) && Boolean(process.stderr?.isTTY) && !process.env.CI
   const clearScreen = () => {
     if (!useInteractiveOutput) return
     process.stdout.write('\x1b[2J\x1b[0f')
@@ -96,20 +159,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
   const uploadFileWithRetry = async (
     client: oss,
-    name: string,
-    filePath: string,
+    task: UploadTask,
+    silentLogs: boolean,
     maxRetries: number = retryTimes,
   ): Promise<UploadResult> => {
-    let shouldUseMultipart = false
-    try {
-      const fileStats = await stat(filePath)
-      shouldUseMultipart = fileStats.size >= multipartThreshold
-    } catch (error) {
-      console.log(
-        `${chalk.red('✗')} ${filePath} => 无法读取文件信息: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return { success: false, file: filePath, error: error as Error }
-    }
+    const shouldUseMultipart = task.size >= multipartThreshold
     const headers = {
       'x-oss-storage-class': 'Standard',
       'x-oss-object-acl': 'default',
@@ -120,13 +174,13 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const result = shouldUseMultipart
-          ? await client.multipartUpload(name, filePath, {
+          ? await client.multipartUpload(task.name, task.filePath, {
               timeout: 600000,
               partSize: 1024 * 1024,
               parallel: Math.max(1, Math.min(concurrency, 4)),
               headers,
             })
-          : await client.put(name, filePath, {
+          : await client.put(task.name, task.filePath, {
               timeout: 600000,
               headers,
             })
@@ -134,29 +188,49 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         if (result.res.status === 200) {
           if (autoDelete) {
             try {
-              await unlink(filePath)
+              await unlink(task.filePath)
             } catch (error) {
-              console.warn(`${chalk.yellow('⚠')} 删除本地文件失败: ${filePath}`)
+              console.warn(`${chalk.yellow('⚠')} 删除本地文件失败: ${task.filePath}`)
             }
           }
 
-          return { success: true, file: filePath }
+          return { success: true, file: task.filePath, name: task.name, size: task.size, retries: attempt - 1 }
         } else {
           throw new Error(`Upload failed with status: ${result.res.status}`)
         }
       } catch (error) {
         if (attempt === maxRetries) {
-          console.log(`${chalk.red('✗')} ${filePath} => ${error instanceof Error ? error.message : String(error)}`)
-          return { success: false, file: filePath, error: error as Error }
+          if (!silentLogs) {
+            console.log(
+              `${chalk.red('✗')} ${task.filePath} => ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+          return {
+            success: false,
+            file: task.filePath,
+            name: task.name,
+            size: task.size,
+            retries: attempt - 1,
+            error: error as Error,
+          }
         } else {
-          console.log(`${chalk.yellow('⚠')} ${filePath} 上传失败，正在重试 (${attempt}/${maxRetries})...`)
+          if (!silentLogs) {
+            console.log(`${chalk.yellow('⚠')} ${task.filePath} 上传失败，正在重试 (${attempt}/${maxRetries})...`)
+          }
           // 等待一段时间再重试
           await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
         }
       }
     }
 
-    return { success: false, file: filePath, error: new Error('Max retries exceeded') }
+    return {
+      success: false,
+      file: task.filePath,
+      name: task.name,
+      size: task.size,
+      retries: maxRetries,
+      error: new Error('Max retries exceeded'),
+    }
   }
 
   const uploadFilesInBatches = async (
@@ -164,65 +238,130 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     files: string[],
     windowSize: number = concurrency,
   ): Promise<UploadResult[]> => {
-    const results: UploadResult[] = new Array(files.length)
+    const results: UploadResult[] = []
     const totalFiles = files.length
+    const tasks: UploadTask[] = []
     let completed = 0
+    let failed = 0
+    let uploadedBytes = 0
+    let retries = 0
 
-    const spinner = useInteractiveOutput ? ora('准备上传...').start() : null
+    const taskCandidates = await Promise.all(
+      files.map(async (relativeFilePath) => {
+        const filePath = normalizePath(resolve(outDir, relativeFilePath))
+        const name = normalizeObjectKey(uploadDir, relativeFilePath)
+
+        try {
+          const fileStats = await stat(filePath)
+          return { task: { filePath, name, size: fileStats.size } as UploadTask }
+        } catch (error) {
+          return { task: null, error: error as Error, filePath, name }
+        }
+      }),
+    )
+
+    for (const candidate of taskCandidates) {
+      if (candidate.task) {
+        tasks.push(candidate.task)
+      } else {
+        failed++
+        completed++
+        results.push({
+          success: false,
+          file: candidate.filePath,
+          name: candidate.name,
+          size: 0,
+          retries: 0,
+          error: candidate.error,
+        })
+      }
+    }
+
+    const totalBytes = tasks.reduce((sum, task) => sum + task.size, 0)
+    const startAt = Date.now()
+    const activeFiles = new Set<string>()
+    const safeWindowSize = Math.max(1, Math.min(windowSize, tasks.length || 1))
+    const silentLogs = Boolean(useInteractiveOutput)
+
+    const spinner = useInteractiveOutput ? ora({ text: '准备上传...', spinner: 'dots12' }).start() : null
     const reportEvery = Math.max(1, Math.ceil(totalFiles / 10))
-    let activeFile = ''
     let lastReportedCompleted = -1
 
     const updateProgress = () => {
-      const percentage = Math.round((completed / totalFiles) * 100)
+      const progressRatio = totalFiles > 0 ? completed / totalFiles : 1
+      const percentage = Math.round(progressRatio * 100)
+      const elapsedSeconds = (Date.now() - startAt) / 1000
+      const speed = elapsedSeconds > 0 ? uploadedBytes / elapsedSeconds : 0
+      const etaSeconds = speed > 0 ? Math.max(0, (totalBytes - uploadedBytes) / speed) : 0
+      const activeList = Array.from(activeFiles)
+      const currentFile =
+        activeList.length > 0 ? trimMiddle(activeList[activeList.length - 1], 86) : '-'
 
       if (!spinner) {
         if (completed === lastReportedCompleted) return
         if (completed === totalFiles || completed % reportEvery === 0) {
-          console.log(`${chalk.gray('Progress:')} ${completed}/${totalFiles} (${percentage}%)`)
+          console.log(
+            `${chalk.gray('进度:')} ${completed}/${totalFiles} (${percentage}%) | ${chalk.gray('数据:')} ${formatBytes(uploadedBytes)}/${formatBytes(totalBytes)} | ${chalk.gray('速度:')} ${formatBytes(speed)}/s`,
+          )
           lastReportedCompleted = completed
         }
         return
       }
 
-      const width = 30
-      const filled = Math.round((width * completed) / totalFiles)
-      const empty = width - filled
-      const bar = chalk.green('█'.repeat(filled)) + chalk.gray('░'.repeat(empty))
+      const bar = buildCapsuleBar(progressRatio)
+      const warnLine =
+        retries > 0 || failed > 0
+          ? `\n${chalk.yellow('重试')}: ${retries}  ${chalk.yellow('失败')}: ${failed}`
+          : ''
 
-      spinner.text = `正在上传: ${chalk.cyan(activeFile)}\n${bar} ${percentage}% (${completed}/${totalFiles})`
+      spinner.text = [
+        `${chalk.cyan('正在上传:')} ${chalk.white(currentFile)}`,
+        `${bar} ${chalk.bold(`${percentage}%`)} ${chalk.gray(`(${completed}/${totalFiles})`)} ${chalk.gray('|')} ${chalk.blue(formatBytes(uploadedBytes))}/${chalk.blue(formatBytes(totalBytes))} ${chalk.gray('|')} ${chalk.magenta(`${formatBytes(speed)}/s`)} ${chalk.gray('|')} 预计 ${chalk.yellow(formatDuration(etaSeconds))}`,
+      ].join('\n')
+      spinner.text += warnLine
     }
 
+    const refreshTimer = spinner ? setInterval(updateProgress, 120) : null
     let currentIndex = 0
-    const safeWindowSize = Math.max(1, Math.min(windowSize, totalFiles))
 
     const worker = async () => {
       while (true) {
         const index = currentIndex++
-        if (index >= totalFiles) return
+        if (index >= tasks.length) return
 
-        const relativeFilePath = normalizePath(files[index])
-        const filePath = normalizePath(resolve(outDir, relativeFilePath))
-        const name = normalizeObjectKey(uploadDir, relativeFilePath)
+        const task = tasks[index]
+        activeFiles.add(task.name)
+        updateProgress()
 
-        if (spinner) {
-          activeFile = name
-          updateProgress()
-        }
-
-        const result = await uploadFileWithRetry(client, name, filePath)
+        const result = await uploadFileWithRetry(client, task, silentLogs)
         completed++
-        results[index] = result
+        retries += result.retries
+        if (result.success) {
+          uploadedBytes += result.size
+        } else {
+          failed++
+        }
+        results.push(result)
+        activeFiles.delete(task.name)
         updateProgress()
       }
     }
 
-    await Promise.all(Array.from({ length: safeWindowSize }, () => worker()))
+    updateProgress()
+
+    try {
+      await Promise.all(Array.from({ length: safeWindowSize }, () => worker()))
+    } finally {
+      if (refreshTimer) clearInterval(refreshTimer)
+    }
 
     if (spinner) {
-      const width = 30
-      const bar = chalk.green('█'.repeat(width))
-      spinner.succeed(`所有文件上传完成!\n${bar} 100% (${totalFiles}/${totalFiles})`)
+      const elapsedSeconds = (Date.now() - startAt) / 1000
+      const successCount = results.filter((item) => item.success).length
+      const speed = elapsedSeconds > 0 ? uploadedBytes / elapsedSeconds : 0
+      spinner.succeed(
+        `${chalk.green('上传成功')} ${successCount} 个文件。\n${buildCapsuleBar(1)} 100% (${totalFiles}/${totalFiles}) ${chalk.gray('|')} 速度 ${chalk.magenta(`${formatBytes(speed)}/s`)} ${chalk.gray('|')} 耗时 ${chalk.yellow(formatDuration(elapsedSeconds))}`,
+      )
     } else {
       console.log(`${chalk.green('✔')} 所有文件上传完成 (${totalFiles}/${totalFiles})`)
     }
@@ -289,7 +428,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
           const successCount = results.filter((r) => r.success).length
           const failedCount = results.length - successCount
-          const duration = ((Date.now() - startTime) / 1000).toFixed(2)
+          const durationSeconds = (Date.now() - startTime) / 1000
+          const duration = durationSeconds.toFixed(2)
+          const uploadedBytes = results.reduce((sum, result) => (result.success ? sum + result.size : sum), 0)
+          const retryCount = results.reduce((sum, result) => sum + result.retries, 0)
+          const avgSpeed = durationSeconds > 0 ? uploadedBytes / durationSeconds : 0
 
           clearScreen()
           console.log('\n' + chalk.gray('─'.repeat(40)) + '\n')
@@ -305,9 +448,27 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           if (failedCount > 0) {
             console.log(` ${chalk.red('✗')} 失败: ${chalk.bold(failedCount)}`)
           }
+          console.log(` ${chalk.cyan('⇄')} 重试: ${chalk.bold(retryCount)}`)
+          console.log(` ${chalk.blue('📦')} 数据: ${chalk.bold(formatBytes(uploadedBytes))}`)
+          console.log(` ${chalk.magenta('⚡')} 平均速度: ${chalk.bold(`${formatBytes(avgSpeed)}/s`)}`)
           console.log(` ${chalk.blue('⏱')} 耗时: ${chalk.bold(duration)}s`)
 
           console.log('')
+
+          if (failedCount > 0) {
+            const failedItems = results.filter((result) => !result.success)
+            const previewCount = Math.min(5, failedItems.length)
+            console.log(chalk.red('失败明细:'))
+            for (let i = 0; i < previewCount; i++) {
+              const item = failedItems[i]
+              const reason = item.error?.message || 'unknown error'
+              console.log(` ${chalk.red('•')} ${item.name} => ${reason}`)
+            }
+            if (failedItems.length > previewCount) {
+              console.log(chalk.gray(` ... 还有 ${failedItems.length - previewCount} 个失败文件`))
+            }
+            console.log('')
+          }
 
           try {
             await deleteEmpty(resolve(outDir))

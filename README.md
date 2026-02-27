@@ -26,6 +26,8 @@ export default {
     vitePluginDeployOss({
       // 建议按环境变量开关上传，避免本地/CI误上传
       open: process.env.DEPLOY_OSS === '1',
+      // 终端实时动效进度面板（默认 true）
+      fancy: true,
 
       accessKeyId: '***',
       accessKeySecret: '***',
@@ -47,4 +49,5 @@ export default {
 ## 说明
 
 - `open` 默认 `true`，建议通过环境变量控制开关（例如 `DEPLOY_OSS=1` 时再上传）。
+- `fancy` 默认 `true`，TTY 终端下会显示实时动效进度（速度、预计剩余、并发、当前文件）。
 - `failOnError` 默认 `true`，上传有失败会抛错，适合 CI 场景保证发布质量。
