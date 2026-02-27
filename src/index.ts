@@ -1,8 +1,7 @@
 import oss from 'ali-oss'
 import chalk from 'chalk'
-import deleteEmpty from 'delete-empty'
 import { globSync } from 'glob'
-import { stat, unlink } from 'node:fs/promises'
+import { readdir, rm, stat, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import ora from 'ora'
 import { normalizePath, Plugin, type ResolvedConfig } from 'vite'
@@ -49,6 +48,40 @@ interface UploadTask {
   filePath: string
   name: string
   size: number
+}
+
+const GARBAGE_FILE_REGEX = /(?:Thumbs\.db|\.DS_Store)$/i
+
+const removeEmptyDirectories = async (rootDir: string): Promise<string[]> => {
+  const deletedDirectories: string[] = []
+
+  const visit = async (dirPath: string): Promise<boolean> => {
+    const entries = await readdir(dirPath, { withFileTypes: true })
+    let hasNonEmptyContent = false
+
+    for (const entry of entries) {
+      const entryPath = resolve(dirPath, entry.name)
+
+      if (entry.isDirectory()) {
+        const removed = await visit(entryPath)
+        if (!removed) hasNonEmptyContent = true
+        continue
+      }
+
+      if (!GARBAGE_FILE_REGEX.test(entry.name)) {
+        hasNonEmptyContent = true
+      }
+    }
+
+    if (hasNonEmptyContent) return false
+
+    await rm(dirPath, { recursive: true, force: true })
+    deletedDirectories.push(dirPath)
+    return true
+  }
+
+  await visit(resolve(rootDir))
+  return deletedDirectories
 }
 
 const normalizeObjectKey = (targetDir: string, relativeFilePath: string): string =>
@@ -471,7 +504,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           }
 
           try {
-            await deleteEmpty(resolve(outDir))
+            await removeEmptyDirectories(outDir)
           } catch (error) {
             console.warn(`${chalk.yellow('⚠ 清理空目录失败:')} ${error}`)
           }
