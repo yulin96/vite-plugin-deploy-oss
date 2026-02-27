@@ -48,6 +48,7 @@ export default {
 
 ## 说明
 
+- 当前版本仅支持 ESM（`import`），不再提供 CommonJS（`require`）入口。
 - `open` 默认 `true`，建议通过环境变量控制开关（例如 `DEPLOY_OSS=1` 时再上传）。
 - `fancy` 默认 `true`，TTY 终端下会显示实时动效进度（速度、预计剩余、并发、当前文件）。
 - `failOnError` 默认 `true`，上传有失败会抛错，适合 CI 场景保证发布质量。
