@@ -1,0 +1,12 @@
+{
+  "name": "playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "build:deploy": "vite build --mode deploy"
+  },
+  "devDependencies": {
+    "vite": "^8.0.0"
+  }
+}

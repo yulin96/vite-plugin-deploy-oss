@@ -44,7 +44,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "vite": "^6.0.3 || ^7"
+    "vite": "^6.0.3 || ^7 || ^8"
   },
   "dependencies": {
     "ali-oss": "^6.23.0",
