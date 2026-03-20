@@ -17,7 +17,8 @@ export default defineConfig(({ mode }) => {
         uploadDir: `test/__test/`,
         skip: ['**/*.html', '**/pluginWebUpdateNotice/**'],
         overwrite: true,
-        autoDelete: true,
+        autoDelete: false,
+        manifest: true,
 
         // 修改打包后的资源路径
         configBase: `${process.env.zBucketAlias || ''}/test/__test/`,

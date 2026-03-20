@@ -1,10 +1,14 @@
 import oss from 'ali-oss'
 import chalk from 'chalk'
 import { globSync } from 'glob'
-import { readdir, rm, stat, unlink } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import ora from 'ora'
 import { normalizePath, Plugin, type ResolvedConfig } from 'vite'
+
+interface ManifestOption {
+  fileName?: string
+}
 
 export interface vitePluginDeployOssOption extends Omit<
   oss.Options,
@@ -33,11 +37,13 @@ export interface vitePluginDeployOssOption extends Omit<
   concurrency?: number
   retryTimes?: number
   multipartThreshold?: number
+  manifest?: boolean | ManifestOption
 }
 
 interface UploadResult {
   success: boolean
   file: string
+  relativeFilePath: string
   name: string
   size: number
   retries: number
@@ -46,11 +52,25 @@ interface UploadResult {
 
 interface UploadTask {
   filePath: string
+  relativeFilePath: string
   name: string
   size: number
+  cacheControl?: string
+}
+
+interface ManifestFileItem {
+  file: string
+  key: string
+  url: string
+}
+
+interface ManifestPayload {
+  version: number
+  files: ManifestFileItem[]
 }
 
 const GARBAGE_FILE_REGEX = /(?:Thumbs\.db|\.DS_Store)$/i
+const DEFAULT_MANIFEST_FILE_NAME = 'oss-manifest.json'
 
 const removeEmptyDirectories = async (rootDir: string): Promise<string[]> => {
   const deletedDirectories: string[] = []
@@ -88,6 +108,72 @@ const normalizeObjectKey = (targetDir: string, relativeFilePath: string): string
   normalizePath(`${targetDir}/${relativeFilePath}`)
     .replace(/\/{2,}/g, '/')
     .replace(/^\/+/, '')
+
+const normalizeManifestFileName = (fileName?: string): string => {
+  const normalized = normalizePath(fileName || DEFAULT_MANIFEST_FILE_NAME)
+    .replace(/^\/+/, '')
+    .replace(/\/{2,}/g, '/')
+
+  return normalized || DEFAULT_MANIFEST_FILE_NAME
+}
+
+const resolveManifestFileName = (manifest: vitePluginDeployOssOption['manifest']): string | null => {
+  if (!manifest) return null
+  if (manifest === true) return DEFAULT_MANIFEST_FILE_NAME
+  return normalizeManifestFileName(manifest.fileName)
+}
+
+const normalizeUrlBase = (base: string): string => {
+  const normalized = base.replace(/\\/g, '/')
+  const protocolSeparatorIndex = normalized.indexOf('://')
+
+  if (protocolSeparatorIndex >= 0) {
+    const pathIndex = normalized.indexOf('/', protocolSeparatorIndex + 3)
+    if (pathIndex < 0) return normalized
+
+    return `${normalized.slice(0, pathIndex)}${normalized.slice(pathIndex).replace(/\/{2,}/g, '/')}`
+  }
+
+  if (normalized.startsWith('//')) {
+    const pathIndex = normalized.indexOf('/', 2)
+    if (pathIndex < 0) return normalized
+
+    return `${normalized.slice(0, pathIndex)}${normalized.slice(pathIndex).replace(/\/{2,}/g, '/')}`
+  }
+
+  return normalized.replace(/\/{2,}/g, '/')
+}
+
+const encodeUrlPath = (path: string): string => encodeURI(path.replace(/^\/+/, ''))
+
+const joinUrlPath = (base: string, path: string): string =>
+  `${normalizeUrlBase(base).replace(/\/+$/, '')}/${encodeUrlPath(path)}`
+
+const resolveUploadedFileUrl = (
+  relativeFilePath: string,
+  objectKey: string,
+  configBase?: string,
+  alias?: string,
+): string => {
+  if (configBase) return joinUrlPath(configBase, relativeFilePath)
+  if (alias) return joinUrlPath(alias, objectKey)
+  return objectKey
+}
+
+const createManifestPayload = (
+  results: UploadResult[],
+  configBase?: string,
+  alias?: string,
+): ManifestPayload => ({
+  version: Date.now(),
+  files: results
+    .filter((result) => result.success)
+    .map((result) => ({
+      file: result.relativeFilePath,
+      key: result.name,
+      url: resolveUploadedFileUrl(result.relativeFilePath, result.name, configBase, alias),
+    })),
+})
 
 const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -161,6 +247,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     concurrency = 5,
     retryTimes = 3,
     multipartThreshold = 10 * 1024 * 1024,
+    manifest = false,
     ...props
   } = option || {}
 
@@ -190,6 +277,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     return errors
   }
 
+  const uploadSingleTask = async (client: oss, task: UploadTask): Promise<UploadResult> =>
+    uploadFileWithRetry(client, task, false)
+
   const uploadFileWithRetry = async (
     client: oss,
     task: UploadTask,
@@ -200,7 +290,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const headers = {
       'x-oss-storage-class': 'Standard',
       'x-oss-object-acl': 'default',
-      'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400, immutable',
+      'Cache-Control': task.cacheControl || (noCache ? 'no-cache' : 'public, max-age=86400, immutable'),
       'x-oss-forbid-overwrite': overwrite ? 'false' : 'true',
     }
 
@@ -227,7 +317,14 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             }
           }
 
-          return { success: true, file: task.filePath, name: task.name, size: task.size, retries: attempt - 1 }
+          return {
+            success: true,
+            file: task.filePath,
+            relativeFilePath: task.relativeFilePath,
+            name: task.name,
+            size: task.size,
+            retries: attempt - 1,
+          }
         } else {
           throw new Error(`Upload failed with status: ${result.res.status}`)
         }
@@ -241,6 +338,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           return {
             success: false,
             file: task.filePath,
+            relativeFilePath: task.relativeFilePath,
             name: task.name,
             size: task.size,
             retries: attempt - 1,
@@ -259,6 +357,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     return {
       success: false,
       file: task.filePath,
+      relativeFilePath: task.relativeFilePath,
       name: task.name,
       size: task.size,
       retries: maxRetries,
@@ -286,9 +385,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
         try {
           const fileStats = await stat(filePath)
-          return { task: { filePath, name, size: fileStats.size } as UploadTask }
+          return { task: { filePath, relativeFilePath, name, size: fileStats.size } as UploadTask }
         } catch (error) {
-          return { task: null, error: error as Error, filePath, name }
+          return { task: null, error: error as Error, filePath, relativeFilePath, name }
         }
       }),
     )
@@ -302,6 +401,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         results.push({
           success: false,
           file: candidate.filePath,
+          relativeFilePath: candidate.relativeFilePath,
           name: candidate.name,
           size: 0,
           retries: 0,
@@ -435,12 +535,15 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
         const startTime = Date.now()
         const client = new oss({ region, accessKeyId, accessKeySecret, secure, bucket, ...props })
+        const manifestFileName = resolveManifestFileName(manifest)
 
         const files = globSync('**/*', {
           cwd: outDir,
           nodir: true,
           ignore: Array.isArray(skip) ? skip : [skip],
-        }).map((file) => normalizePath(file))
+        })
+          .map((file) => normalizePath(file))
+          .filter((file) => file !== manifestFileName)
 
         if (files.length === 0) {
           console.log(`${chalk.yellow('⚠ 没有找到需要上传的文件')}`)
@@ -500,6 +603,45 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             if (failedItems.length > previewCount) {
               console.log(chalk.gray(` ... 还有 ${failedItems.length - previewCount} 个失败文件`))
             }
+            console.log('')
+          }
+
+          if (manifestFileName) {
+            const manifestRelativeFilePath = manifestFileName
+            const manifestFilePath = normalizePath(resolve(outDir, manifestRelativeFilePath))
+            const manifestObjectKey = normalizeObjectKey(uploadDir, manifestRelativeFilePath)
+
+            await mkdir(dirname(manifestFilePath), { recursive: true })
+            await writeFile(
+              manifestFilePath,
+              JSON.stringify(createManifestPayload(results, configBase, alias), null, 2),
+              'utf8',
+            )
+
+            const manifestStats = await stat(manifestFilePath)
+            const manifestResult = await uploadSingleTask(client, {
+              filePath: manifestFilePath,
+              relativeFilePath: manifestRelativeFilePath,
+              name: manifestObjectKey,
+              size: manifestStats.size,
+              cacheControl: 'no-cache',
+            })
+
+            if (!manifestResult.success) {
+              throw manifestResult.error || new Error(`Failed to upload manifest: ${manifestRelativeFilePath}`)
+            }
+
+            const manifestUrl = resolveUploadedFileUrl(
+              manifestRelativeFilePath,
+              manifestObjectKey,
+              configBase,
+              alias,
+            )
+
+            console.log(chalk.cyan('Manifest:'))
+            console.log(` ${chalk.gray('File:')}   ${chalk.yellow(manifestFilePath)}`)
+            console.log(` ${chalk.gray('Target:')} ${chalk.yellow(manifestObjectKey)}`)
+            console.log(` ${chalk.gray('URL:')}    ${chalk.green(manifestUrl)}`)
             console.log('')
           }
 

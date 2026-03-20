@@ -39,6 +39,9 @@ export default {
       // 默认 true：有上传失败时抛错并让构建失败
       failOnError: true,
 
+      // 生成并上传 OSS 汇总文件
+      manifest: true,
+
       // 修改打包后的资源路径
       configBase: `https://oss.eventnet.cn/H5/zz/test/`,
     }),
@@ -52,3 +55,20 @@ export default {
 - `open` 默认 `true`，建议通过环境变量控制开关（例如 `DEPLOY_OSS=1` 时再上传）。
 - `fancy` 默认 `true`，TTY 终端下会显示实时动效进度（速度、预计剩余、并发、当前文件）。
 - `failOnError` 默认 `true`，上传有失败会抛错，适合 CI 场景保证发布质量。
+- `manifest` 默认关闭。开启后会在构建目录生成并上传 `oss-manifest.json`。
+- `manifest: true` 时默认文件名为 `oss-manifest.json`，也支持 `manifest: { fileName: 'meta/oss-manifest.json' }` 自定义路径。
+- `oss-manifest.json` 仅包含本次成功上传的文件，不包含汇总文件自身。
+- `oss-manifest.json` 内容示例：
+
+```json
+{
+  "version": 1742467200000,
+  "files": [
+    {
+      "file": "assets/index-abc123.js",
+      "key": "H5/zz/test/assets/index-abc123.js",
+      "url": "https://oss.eventnet.cn/H5/zz/test/assets/index-abc123.js"
+    }
+  ]
+}
+```
