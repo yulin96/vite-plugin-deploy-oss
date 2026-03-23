@@ -1,6 +1,8 @@
 import oss from 'ali-oss'
 import chalk from 'chalk'
 import { globSync } from 'glob'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import ora from 'ora'
@@ -62,11 +64,22 @@ interface ManifestFileItem {
   file: string
   key: string
   url: string
+  md5: string
 }
 
 interface ManifestPayload {
   version: number
   files: ManifestFileItem[]
+}
+
+const getFileMd5 = (filePath: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('md5')
+    const stream = createReadStream(filePath)
+    stream.on('error', (err) => reject(err))
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('end', () => resolve(hash.digest('hex')))
+  })
 }
 
 const GARBAGE_FILE_REGEX = /(?:Thumbs\.db|\.DS_Store)$/i
@@ -160,20 +173,30 @@ const resolveUploadedFileUrl = (
   return objectKey
 }
 
-const createManifestPayload = (
+const createManifestPayload = async (
   results: UploadResult[],
   configBase?: string,
   alias?: string,
-): ManifestPayload => ({
-  version: Date.now(),
-  files: results
-    .filter((result) => result.success)
-    .map((result) => ({
-      file: result.relativeFilePath,
-      key: result.name,
-      url: resolveUploadedFileUrl(result.relativeFilePath, result.name, configBase, alias),
-    })),
-})
+): Promise<ManifestPayload> => {
+  const successfulResults = results.filter((result) => result.success)
+
+  const files = await Promise.all(
+    successfulResults.map(async (result) => {
+      const md5 = await getFileMd5(result.file)
+      return {
+        file: result.relativeFilePath,
+        key: result.name,
+        url: resolveUploadedFileUrl(result.relativeFilePath, result.name, configBase, alias),
+        md5,
+      }
+    })
+  )
+
+  return {
+    version: Date.now(),
+    files,
+  }
+}
 
 const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -616,7 +639,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             await mkdir(dirname(manifestFilePath), { recursive: true })
             await writeFile(
               manifestFilePath,
-              JSON.stringify(createManifestPayload(results, configBase, alias), null, 2),
+              JSON.stringify(await createManifestPayload(results, configBase, alias), null, 2),
               'utf8',
             )
 
@@ -626,7 +649,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
               relativeFilePath: manifestRelativeFilePath,
               name: manifestObjectKey,
               size: manifestStats.size,
-              cacheControl: 'no-cache',
+              cacheControl: 'no-cache, no-store, must-revalidate',
             })
 
             if (!manifestResult.success) {

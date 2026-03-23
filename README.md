@@ -67,7 +67,8 @@ export default {
     {
       "file": "assets/index-abc123.js",
       "key": "H5/zz/test/assets/index-abc123.js",
-      "url": "https://oss.eventnet.cn/H5/zz/test/assets/index-abc123.js"
+      "url": "https://oss.eventnet.cn/H5/zz/test/assets/index-abc123.js",
+      "md5": "d41d8cd98f00b204e9800998ecf8427e"
     }
   ]
 }
