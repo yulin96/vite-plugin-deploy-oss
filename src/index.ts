@@ -290,7 +290,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const headers = {
       'x-oss-storage-class': 'Standard',
       'x-oss-object-acl': 'default',
-      'Cache-Control': task.cacheControl || (noCache ? 'no-cache' : 'public, max-age=86400, immutable'),
+      'Cache-Control':
+        task.cacheControl ||
+        (noCache || task.name.endsWith('.html') ? 'no-cache' : 'public, max-age=86400, immutable'),
       'x-oss-forbid-overwrite': overwrite ? 'false' : 'true',
     }
 
