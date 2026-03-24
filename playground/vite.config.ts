@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
         bucket: process.env.zBucket || '',
         region: 'oss-cn-beijing',
         alias: process.env.zBucketAlias || '',
-        uploadDir: `test/__test/`,
+        uploadDir: `/test/__test/`,
         skip: ['**/*.html', '**/pluginWebUpdateNotice/**'],
         overwrite: true,
         autoDelete: false,

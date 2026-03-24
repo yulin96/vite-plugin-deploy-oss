@@ -85,6 +85,62 @@ const getFileMd5 = (filePath: string): Promise<string> => {
 const GARBAGE_FILE_REGEX = /(?:Thumbs\.db|\.DS_Store)$/i
 const DEFAULT_MANIFEST_FILE_NAME = 'oss-manifest.json'
 
+const normalizeSlash = (value: string): string => value.replace(/\\/g, '/').trim()
+
+const normalizePathSegments = (...values: Array<string | undefined>): string =>
+  values
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => normalizeSlash(value).split('/'))
+    .filter(Boolean)
+    .join('/')
+
+const splitUrlLikeBase = (value: string): { prefix: string; path: string } => {
+  const normalized = normalizeSlash(value)
+  const protocolMatch = normalized.match(/^([a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/]+)(.*)$/)
+  if (protocolMatch) {
+    return {
+      prefix: protocolMatch[1],
+      path: protocolMatch[2] || '',
+    }
+  }
+
+  const protocolRelativeMatch = normalized.match(/^(\/\/[^/]+)(.*)$/)
+  if (protocolRelativeMatch) {
+    return {
+      prefix: protocolRelativeMatch[1],
+      path: protocolRelativeMatch[2] || '',
+    }
+  }
+
+  if (normalized.startsWith('/')) {
+    return {
+      prefix: '/',
+      path: normalized,
+    }
+  }
+
+  return {
+    prefix: '',
+    path: normalized,
+  }
+}
+
+const normalizeUrlLikeBase = (base: string): string => {
+  const { prefix, path } = splitUrlLikeBase(base)
+  const normalizedPath = normalizePathSegments(path)
+
+  if (!prefix) return normalizedPath
+  if (!normalizedPath) return prefix
+  if (prefix === '/') return `/${normalizedPath}`
+
+  return `${prefix}/${normalizedPath}`
+}
+
+const ensureTrailingSlash = (value: string): string => {
+  if (!value || value.endsWith('/')) return value
+  return `${value}/`
+}
+
 const removeEmptyDirectories = async (rootDir: string): Promise<string[]> => {
   const deletedDirectories: string[] = []
 
@@ -118,14 +174,10 @@ const removeEmptyDirectories = async (rootDir: string): Promise<string[]> => {
 }
 
 const normalizeObjectKey = (targetDir: string, relativeFilePath: string): string =>
-  normalizePath(`${targetDir}/${relativeFilePath}`)
-    .replace(/\/{2,}/g, '/')
-    .replace(/^\/+/, '')
+  normalizePathSegments(targetDir, relativeFilePath)
 
 const normalizeManifestFileName = (fileName?: string): string => {
-  const normalized = normalizePath(fileName || DEFAULT_MANIFEST_FILE_NAME)
-    .replace(/^\/+/, '')
-    .replace(/\/{2,}/g, '/')
+  const normalized = normalizePathSegments(fileName || DEFAULT_MANIFEST_FILE_NAME)
 
   return normalized || DEFAULT_MANIFEST_FILE_NAME
 }
@@ -136,31 +188,10 @@ const resolveManifestFileName = (manifest: vitePluginDeployOssOption['manifest']
   return normalizeManifestFileName(manifest.fileName)
 }
 
-const normalizeUrlBase = (base: string): string => {
-  const normalized = base.replace(/\\/g, '/')
-  const protocolSeparatorIndex = normalized.indexOf('://')
-
-  if (protocolSeparatorIndex >= 0) {
-    const pathIndex = normalized.indexOf('/', protocolSeparatorIndex + 3)
-    if (pathIndex < 0) return normalized
-
-    return `${normalized.slice(0, pathIndex)}${normalized.slice(pathIndex).replace(/\/{2,}/g, '/')}`
-  }
-
-  if (normalized.startsWith('//')) {
-    const pathIndex = normalized.indexOf('/', 2)
-    if (pathIndex < 0) return normalized
-
-    return `${normalized.slice(0, pathIndex)}${normalized.slice(pathIndex).replace(/\/{2,}/g, '/')}`
-  }
-
-  return normalized.replace(/\/{2,}/g, '/')
-}
-
-const encodeUrlPath = (path: string): string => encodeURI(path.replace(/^\/+/, ''))
+const encodeUrlPath = (path: string): string => encodeURI(normalizePathSegments(path))
 
 const joinUrlPath = (base: string, path: string): string =>
-  `${normalizeUrlBase(base).replace(/\/+$/, '')}/${encodeUrlPath(path)}`
+  `${normalizeUrlLikeBase(base).replace(/\/+$/, '')}/${encodeUrlPath(path)}`
 
 const resolveUploadedFileUrl = (
   relativeFilePath: string,
@@ -189,7 +220,7 @@ const createManifestPayload = async (
         url: resolveUploadedFileUrl(result.relativeFilePath, result.name, configBase, alias),
         md5,
       }
-    })
+    }),
   )
 
   return {
@@ -274,6 +305,10 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     ...props
   } = option || {}
 
+  const normalizedUploadDir = normalizePathSegments(uploadDir)
+  const normalizedConfigBase = configBase ? ensureTrailingSlash(normalizeUrlLikeBase(configBase)) : undefined
+  const normalizedAlias = alias ? normalizeUrlLikeBase(alias) : undefined
+
   let buildFailed = false
 
   let upload = false
@@ -295,8 +330,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     if (!uploadDir) errors.push('uploadDir is required')
     if (!Number.isInteger(retryTimes) || retryTimes < 1) errors.push('retryTimes must be >= 1')
     if (!Number.isInteger(concurrency) || concurrency < 1) errors.push('concurrency must be >= 1')
-    if (!Number.isFinite(multipartThreshold) || multipartThreshold <= 0)
-      errors.push('multipartThreshold must be > 0')
+    if (!Number.isFinite(multipartThreshold) || multipartThreshold <= 0) errors.push('multipartThreshold must be > 0')
     return errors
   }
 
@@ -314,15 +348,15 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       'x-oss-storage-class': 'Standard',
       'x-oss-object-acl': 'default',
       'Cache-Control':
-        task.cacheControl ||
-        (noCache || task.name.endsWith('.html') ? 'no-cache' : 'public, max-age=86400, immutable'),
+        task.cacheControl || (noCache || task.name.endsWith('.html') ? 'no-cache' : 'public, max-age=86400, immutable'),
       'x-oss-forbid-overwrite': overwrite ? 'false' : 'true',
     }
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const result = shouldUseMultipart
-          ? await client.multipartUpload(task.name, task.filePath, {
+        const result =
+          shouldUseMultipart ?
+            await client.multipartUpload(task.name, task.filePath, {
               timeout: 600000,
               partSize: 1024 * 1024,
               parallel: Math.max(1, Math.min(concurrency, 4)),
@@ -406,7 +440,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const taskCandidates = await Promise.all(
       files.map(async (relativeFilePath) => {
         const filePath = normalizePath(resolve(outDir, relativeFilePath))
-        const name = normalizeObjectKey(uploadDir, relativeFilePath)
+        const name = normalizeObjectKey(normalizedUploadDir, relativeFilePath)
 
         try {
           const fileStats = await stat(filePath)
@@ -452,8 +486,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       const speed = elapsedSeconds > 0 ? uploadedBytes / elapsedSeconds : 0
       const etaSeconds = speed > 0 ? Math.max(0, (totalBytes - uploadedBytes) / speed) : 0
       const activeList = Array.from(activeFiles)
-      const currentFile =
-        activeList.length > 0 ? trimMiddle(activeList[activeList.length - 1], 86) : '-'
+      const currentFile = activeList.length > 0 ? trimMiddle(activeList[activeList.length - 1], 86) : '-'
 
       if (!spinner) {
         if (completed === lastReportedCompleted) return
@@ -468,9 +501,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
       const bar = buildCapsuleBar(progressRatio)
       const warnLine =
-        retries > 0 || failed > 0
-          ? `\n${chalk.yellow('重试')}: ${retries}  ${chalk.yellow('失败')}: ${failed}`
-          : ''
+        retries > 0 || failed > 0 ? `\n${chalk.yellow('重试')}: ${retries}  ${chalk.yellow('失败')}: ${failed}` : ''
 
       spinner.text = [
         `${chalk.cyan('正在上传:')} ${chalk.white(currentFile)}`,
@@ -545,7 +576,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       }
 
       upload = true
-      config.base = configBase || config.base
+      config.base = normalizedConfigBase || config.base
       return config
     },
     configResolved(config) {
@@ -580,8 +611,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         console.log(`${chalk.gray('Bucket:')}   ${chalk.green(bucket)}`)
         console.log(`${chalk.gray('Region:')}   ${chalk.green(region)}`)
         console.log(`${chalk.gray('Source:')}   ${chalk.yellow(outDir)}`)
-        console.log(`${chalk.gray('Target:')}   ${chalk.yellow(uploadDir)}`)
-        if (alias) console.log(`${chalk.gray('Alias:')}    ${chalk.green(alias)}`)
+        console.log(`${chalk.gray('Target:')}   ${chalk.yellow(normalizedUploadDir || '/')}`)
+        if (normalizedAlias) console.log(`${chalk.gray('Alias:')}    ${chalk.green(normalizedAlias)}`)
         console.log(`${chalk.gray('Files:')}    ${chalk.blue(files.length)}\n`)
 
         try {
@@ -634,12 +665,12 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           if (manifestFileName) {
             const manifestRelativeFilePath = manifestFileName
             const manifestFilePath = normalizePath(resolve(outDir, manifestRelativeFilePath))
-            const manifestObjectKey = normalizeObjectKey(uploadDir, manifestRelativeFilePath)
+            const manifestObjectKey = normalizeObjectKey(normalizedUploadDir, manifestRelativeFilePath)
 
             await mkdir(dirname(manifestFilePath), { recursive: true })
             await writeFile(
               manifestFilePath,
-              JSON.stringify(await createManifestPayload(results, configBase, alias), null, 2),
+              JSON.stringify(await createManifestPayload(results, normalizedConfigBase, normalizedAlias), null, 2),
               'utf8',
             )
 
@@ -659,8 +690,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             const manifestUrl = resolveUploadedFileUrl(
               manifestRelativeFilePath,
               manifestObjectKey,
-              configBase,
-              alias,
+              normalizedConfigBase,
+              normalizedAlias,
             )
 
             console.log(chalk.cyan('Manifest:'))
