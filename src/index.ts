@@ -1,208 +1,30 @@
 import oss from 'ali-oss'
 import chalk from 'chalk'
 import { globSync } from 'glob'
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { mkdir, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import ora from 'ora'
 import { normalizePath, Plugin, type ResolvedConfig } from 'vite'
-
-interface ManifestOption {
-  fileName?: string
-}
-
-export interface vitePluginDeployOssOption extends Omit<
-  oss.Options,
-  'accessKeyId' | 'accessKeySecret' | 'bucket' | 'region'
-> {
-  configBase?: string
-
-  accessKeyId: string
-  accessKeySecret: string
-  region: string
-  secure?: boolean
-  bucket: string
-  overwrite?: boolean
-  uploadDir: string
-
-  alias?: string
-  autoDelete?: boolean
-
-  skip?: string | string[]
-  open?: boolean
-  fancy?: boolean
-
-  noCache?: boolean
-  failOnError?: boolean
-
-  concurrency?: number
-  retryTimes?: number
-  multipartThreshold?: number
-  manifest?: boolean | ManifestOption
-}
-
-interface UploadResult {
-  success: boolean
-  file: string
-  relativeFilePath: string
-  name: string
-  size: number
-  retries: number
-  error?: Error
-}
-
-interface UploadTask {
-  filePath: string
-  relativeFilePath: string
-  name: string
-  size: number
-  cacheControl?: string
-}
-
-interface ManifestFileItem {
-  file: string
-  key: string
-  url: string
-  md5: string
-}
-
-interface ManifestPayload {
-  version: number
-  files: ManifestFileItem[]
-}
-
-const getFileMd5 = (filePath: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('md5')
-    const stream = createReadStream(filePath)
-    stream.on('error', (err) => reject(err))
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('end', () => resolve(hash.digest('hex')))
-  })
-}
-
-const GARBAGE_FILE_REGEX = /(?:Thumbs\.db|\.DS_Store)$/i
-const DEFAULT_MANIFEST_FILE_NAME = 'oss-manifest.json'
-
-const normalizeSlash = (value: string): string => value.replace(/\\/g, '/').trim()
-
-const normalizePathSegments = (...values: Array<string | undefined>): string =>
-  values
-    .filter((value): value is string => Boolean(value))
-    .flatMap((value) => normalizeSlash(value).split('/'))
-    .filter(Boolean)
-    .join('/')
-
-const splitUrlLikeBase = (value: string): { prefix: string; path: string } => {
-  const normalized = normalizeSlash(value)
-  const protocolMatch = normalized.match(/^([a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/]+)(.*)$/)
-  if (protocolMatch) {
-    return {
-      prefix: protocolMatch[1],
-      path: protocolMatch[2] || '',
-    }
-  }
-
-  const protocolRelativeMatch = normalized.match(/^(\/\/[^/]+)(.*)$/)
-  if (protocolRelativeMatch) {
-    return {
-      prefix: protocolRelativeMatch[1],
-      path: protocolRelativeMatch[2] || '',
-    }
-  }
-
-  if (normalized.startsWith('/')) {
-    return {
-      prefix: '/',
-      path: normalized,
-    }
-  }
-
-  return {
-    prefix: '',
-    path: normalized,
-  }
-}
-
-const normalizeUrlLikeBase = (base: string): string => {
-  const { prefix, path } = splitUrlLikeBase(base)
-  const normalizedPath = normalizePathSegments(path)
-
-  if (!prefix) return normalizedPath
-  if (!normalizedPath) return prefix
-  if (prefix === '/') return `/${normalizedPath}`
-
-  return `${prefix}/${normalizedPath}`
-}
-
-const ensureTrailingSlash = (value: string): string => {
-  if (!value || value.endsWith('/')) return value
-  return `${value}/`
-}
-
-const removeEmptyDirectories = async (rootDir: string): Promise<string[]> => {
-  const deletedDirectories: string[] = []
-
-  const visit = async (dirPath: string): Promise<boolean> => {
-    const entries = await readdir(dirPath, { withFileTypes: true })
-    let hasNonEmptyContent = false
-
-    for (const entry of entries) {
-      const entryPath = resolve(dirPath, entry.name)
-
-      if (entry.isDirectory()) {
-        const removed = await visit(entryPath)
-        if (!removed) hasNonEmptyContent = true
-        continue
-      }
-
-      if (!GARBAGE_FILE_REGEX.test(entry.name)) {
-        hasNonEmptyContent = true
-      }
-    }
-
-    if (hasNonEmptyContent) return false
-
-    await rm(dirPath, { recursive: true, force: true })
-    deletedDirectories.push(dirPath)
-    return true
-  }
-
-  await visit(resolve(rootDir))
-  return deletedDirectories
-}
-
-const normalizeObjectKey = (targetDir: string, relativeFilePath: string): string =>
-  normalizePathSegments(targetDir, relativeFilePath)
-
-const normalizeManifestFileName = (fileName?: string): string => {
-  const normalized = normalizePathSegments(fileName || DEFAULT_MANIFEST_FILE_NAME)
-
-  return normalized || DEFAULT_MANIFEST_FILE_NAME
-}
-
-const resolveManifestFileName = (manifest: vitePluginDeployOssOption['manifest']): string | null => {
-  if (!manifest) return null
-  if (manifest === true) return DEFAULT_MANIFEST_FILE_NAME
-  return normalizeManifestFileName(manifest.fileName)
-}
-
-const encodeUrlPath = (path: string): string => encodeURI(normalizePathSegments(path))
-
-const joinUrlPath = (base: string, path: string): string =>
-  `${normalizeUrlLikeBase(base).replace(/\/+$/, '')}/${encodeUrlPath(path)}`
-
-const resolveUploadedFileUrl = (
-  relativeFilePath: string,
-  objectKey: string,
-  configBase?: string,
-  alias?: string,
-): string => {
-  if (configBase) return joinUrlPath(configBase, relativeFilePath)
-  if (alias) return joinUrlPath(alias, objectKey)
-  return objectKey
-}
+import type { ManifestPayload, UploadResult, UploadTask, vitePluginDeployOssOption } from './types'
+import { getFileMd5, removeEmptyDirectories } from './utils/file'
+import {
+  ensureTrailingSlash,
+  normalizeObjectKey,
+  normalizePathSegments,
+  normalizeUrlLikeBase,
+  resolveManifestFileName,
+  resolveUploadedFileUrl,
+} from './utils/path'
+import { buildCapsuleBar, formatBytes, formatDuration, trimMiddle } from './utils/progress'
+export type {
+  ManifestConfig,
+  ManifestFileItem,
+  ManifestOption,
+  ManifestPayload,
+  UploadResult,
+  UploadTask,
+  vitePluginDeployOssOption,
+} from './types'
 
 const createManifestPayload = async (
   results: UploadResult[],
@@ -227,58 +49,6 @@ const createManifestPayload = async (
     version: Date.now(),
     files,
   }
-}
-
-const formatBytes = (bytes: number): string => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unitIndex = 0
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex++
-  }
-
-  const digits = value >= 100 || unitIndex === 0 ? 0 : 1
-  return `${value.toFixed(digits)} ${units[unitIndex]}`
-}
-
-const formatDuration = (seconds: number): string => {
-  if (!Number.isFinite(seconds) || seconds < 0) return '--'
-
-  const rounded = Math.round(seconds)
-  const mins = Math.floor(rounded / 60)
-  const secs = rounded % 60
-
-  if (mins === 0) return `${secs}s`
-  return `${mins}m${String(secs).padStart(2, '0')}s`
-}
-
-const trimMiddle = (text: string, maxLength: number): string => {
-  if (text.length <= maxLength) return text
-  if (maxLength <= 10) return text.slice(0, maxLength)
-
-  const leftLength = Math.floor((maxLength - 3) / 2)
-  const rightLength = maxLength - 3 - leftLength
-  return `${text.slice(0, leftLength)}...${text.slice(-rightLength)}`
-}
-
-const buildCapsuleBar = (ratio: number, width = 30): string => {
-  const safeRatio = Math.max(0, Math.min(1, ratio))
-  if (width <= 0) return ''
-
-  if (safeRatio >= 1) {
-    return chalk.green('█'.repeat(width))
-  }
-
-  const pointerIndex = Math.min(width - 1, Math.floor(width * safeRatio))
-  const done = pointerIndex > 0 ? chalk.green('█'.repeat(pointerIndex)) : ''
-  const pointer = chalk.cyanBright('▸')
-  const pending = pointerIndex < width - 1 ? chalk.gray('░'.repeat(width - pointerIndex - 1)) : ''
-
-  return `${done}${pointer}${pending}`
 }
 
 export default function vitePluginDeployOss(option: vitePluginDeployOssOption): Plugin {
