@@ -125,9 +125,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const result =
-          shouldUseMultipart ?
-            await client.multipartUpload(task.name, task.filePath, {
+        const result = shouldUseMultipart
+          ? await client.multipartUpload(task.name, task.filePath, {
               timeout: 600000,
               partSize: 1024 * 1024,
               parallel: Math.max(1, Math.min(concurrency, 4)),
@@ -248,9 +247,8 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     const safeWindowSize = Math.max(1, Math.min(windowSize, tasks.length || 1))
     const silentLogs = Boolean(useInteractiveOutput)
 
-    const progressBar =
-      useInteractiveOutput ?
-        new cliProgress.SingleBar({
+    const progressBar = useInteractiveOutput
+      ? new cliProgress.SingleBar({
           hideCursor: true,
           clearOnComplete: true,
           stopOnComplete: true,
@@ -471,9 +469,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             {
               label: '结果:',
               value:
-                failedCount === 0 ?
-                  chalk.green(`${successCount}/${results.length} 全部成功`)
-                : chalk.yellow(`成功 ${successCount} 个，失败 ${failedCount} 个`),
+                failedCount === 0
+                  ? chalk.green(`${successCount}/${results.length} 全部成功`)
+                  : chalk.yellow(`成功 ${successCount} 个，失败 ${failedCount} 个`),
             },
             {
               label: '统计:',

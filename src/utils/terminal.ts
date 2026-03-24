@@ -30,12 +30,7 @@ export const truncateTerminalText = (text: string, reservedWidth = 26): string =
   return cliTruncate(text, maxWidth, { position: 'middle' })
 }
 
-export const renderPanel = (
-  title: string,
-  rows: TerminalRow[],
-  tone: PanelTone = 'info',
-  footer?: string,
-): string => {
+export const renderPanel = (title: string, rows: TerminalRow[], tone: PanelTone = 'info', footer?: string): string => {
   const color = chalk[panelBorderColor[tone] as keyof typeof chalk] as (text: string) => string
   const innerWidth = getPanelInnerWidth()
   const labelWidth = rows.length > 0 ? Math.max(...rows.map((row) => stringWidth(row.label))) : 0

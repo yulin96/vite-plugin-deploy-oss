@@ -22,6 +22,8 @@
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json",
     "pack": "pnpm run build && pnpm pack",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "build:test": "cd playground && vite build",
     "build:test:deploy": "cd playground && vite build --mode deploy"
   },
@@ -40,6 +42,7 @@
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",
     "@types/node": "^22.19.13",
+    "prettier": "3.8.1",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
