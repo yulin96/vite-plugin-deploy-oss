@@ -25,6 +25,7 @@ export interface vitePluginDeployOssOption extends Omit<
 
   skip?: string | string[]
   open?: boolean
+  debug?: boolean
   fancy?: boolean
 
   noCache?: boolean

@@ -12,6 +12,14 @@
 pnpm add vite-plugin-deploy-oss -D
 ```
 
+## 调试模式
+
+```bash
+pnpm run build:test:debug
+```
+
+这会进入带调试信息的上传模式，构建结束后额外输出每个关键步骤花了多久。
+
 ## 使用
 
 ```ts
@@ -26,6 +34,8 @@ export default {
     vitePluginDeployOss({
       // 建议按环境变量开关上传，避免本地/CI误上传
       open: process.env.DEPLOY_OSS === '1',
+      // 输出调试耗时信息，方便排查慢在哪里
+      debug: process.env.DEPLOY_OSS_DEBUG === '1',
       // 终端实时动效进度面板（默认 true）
       fancy: true,
 
@@ -53,6 +63,7 @@ export default {
 
 - 当前版本仅支持 ESM（`import`），不再提供 CommonJS（`require`）入口。
 - `open` 默认 `true`，建议通过环境变量控制开关（例如 `DEPLOY_OSS=1` 时再上传）。
+- `debug` 默认关闭。开启后会在结束时额外输出每个关键步骤花了多久，方便排查慢点和卡点。
 - `fancy` 默认 `true`，TTY 终端下会显示实时动效进度（速度、预计剩余、并发、当前文件）。
 - `failOnError` 默认 `true`，上传有失败会抛错，适合 CI 场景保证发布质量。
 - `manifest` 默认关闭。开启后会在构建目录生成并上传 `oss-manifest.json`。

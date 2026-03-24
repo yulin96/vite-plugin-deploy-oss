@@ -27,6 +27,36 @@ export type {
   vitePluginDeployOssOption,
 } from './types'
 
+interface DebugTimingEntry {
+  label: string
+  durationMs: number
+  detail?: string
+}
+
+interface UploadBatchExecution {
+  results: UploadResult[]
+  debugEntries: DebugTimingEntry[]
+}
+
+const formatTimingDuration = (durationMs: number): string => {
+  if (durationMs < 1000) return `${durationMs}ms`
+  const seconds = durationMs / 1000
+  return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`
+}
+
+const renderDebugPanel = (entries: DebugTimingEntry[]): string => {
+  const rows = entries.map((entry) => ({
+    label: `${entry.label}:`,
+    value: chalk.cyan(
+      entry.detail
+        ? `${formatTimingDuration(entry.durationMs)} · ${truncateTerminalText(entry.detail, 24)}`
+        : formatTimingDuration(entry.durationMs),
+    ),
+  }))
+
+  return renderPanel('调试耗时', rows, 'info')
+}
+
 const createManifestPayload = async (
   results: UploadResult[],
   configBase?: string,
@@ -66,6 +96,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     autoDelete = false,
     alias,
     open = true,
+    debug = false,
     fancy = true,
     noCache = false,
     failOnError = true,
@@ -201,8 +232,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     client: oss,
     files: string[],
     windowSize: number = concurrency,
-  ): Promise<UploadResult[]> => {
+  ): Promise<UploadBatchExecution> => {
     const results: UploadResult[] = []
+    const debugEntries: DebugTimingEntry[] = []
     const totalFiles = files.length
     const tasks: UploadTask[] = []
     let completed = 0
@@ -210,6 +242,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
     let uploadedBytes = 0
     let retries = 0
 
+    const taskPrepareStartedAt = Date.now()
     const taskCandidates = await Promise.all(
       files.map(async (relativeFilePath) => {
         const filePath = normalizePath(resolve(outDir, relativeFilePath))
@@ -223,6 +256,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         }
       }),
     )
+    debugEntries.push({
+      label: '生成上传任务',
+      durationMs: Date.now() - taskPrepareStartedAt,
+      detail: `${files.length} 个文件`,
+    })
 
     for (const candidate of taskCandidates) {
       if (candidate.task) {
@@ -341,7 +379,13 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
       console.log(`${getLogSymbol('success')} 所有文件上传完成 (${totalFiles}/${totalFiles})`)
     }
 
-    return results
+    debugEntries.push({
+      label: '上传文件',
+      durationMs: Date.now() - startAt,
+      detail: `${tasks.length} 个成功候选 · 并发 ${safeWindowSize}`,
+    })
+
+    return { results, debugEntries }
   }
   return {
     name: 'vite-plugin-deploy-oss',
@@ -374,9 +418,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         if (!open || !upload || buildFailed || !resolvedConfig) return
 
         const startTime = Date.now()
+        const debugEntries: DebugTimingEntry[] = []
         const client = new oss({ region, accessKeyId, accessKeySecret, secure, bucket, ...props })
         const manifestFileName = resolveManifestFileName(manifest)
 
+        const collectFilesStartedAt = Date.now()
         const files = globSync('**/*', {
           cwd: outDir,
           nodir: true,
@@ -384,6 +430,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         })
           .map((file) => normalizePath(file))
           .filter((file) => file !== manifestFileName)
+        debugEntries.push({
+          label: '扫描本地文件',
+          durationMs: Date.now() - collectFilesStartedAt,
+          detail: `${files.length} 个文件`,
+        })
 
         if (files.length === 0) {
           console.log(`${getLogSymbol('warning')} 没有找到需要上传的文件`)
@@ -415,7 +466,11 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         )
 
         try {
-          const results = await uploadFilesInBatches(client, files, concurrency)
+          const uploadExecution = await uploadFilesInBatches(client, files, concurrency)
+          const { results, debugEntries: uploadDebugEntries } = uploadExecution
+          if (debug) {
+            debugEntries.push(...uploadDebugEntries)
+          }
 
           const successCount = results.filter((r) => r.success).length
           const failedCount = results.length - successCount
@@ -430,14 +485,23 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             const manifestFilePath = normalizePath(resolve(outDir, manifestRelativeFilePath))
             const manifestObjectKey = normalizeObjectKey(normalizedUploadDir, manifestRelativeFilePath)
 
+            const manifestStartedAt = Date.now()
             await mkdir(dirname(manifestFilePath), { recursive: true })
             await writeFile(
               manifestFilePath,
               JSON.stringify(await createManifestPayload(results, normalizedConfigBase, normalizedAlias), null, 2),
               'utf8',
             )
+            if (debug) {
+              debugEntries.push({
+                label: '生成清单文件',
+                durationMs: Date.now() - manifestStartedAt,
+                detail: manifestRelativeFilePath,
+              })
+            }
 
             const manifestStats = await stat(manifestFilePath)
+            const manifestUploadStartedAt = Date.now()
             const manifestResult = await uploadSingleTask(client, {
               filePath: manifestFilePath,
               relativeFilePath: manifestRelativeFilePath,
@@ -448,6 +512,13 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
             if (!manifestResult.success) {
               throw manifestResult.error || new Error(`Failed to upload manifest: ${manifestRelativeFilePath}`)
+            }
+            if (debug) {
+              debugEntries.push({
+                label: '上传清单文件',
+                durationMs: Date.now() - manifestUploadStartedAt,
+                detail: manifestRelativeFilePath,
+              })
             }
 
             const manifestUrl = resolveUploadedFileUrl(
@@ -460,7 +531,14 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
           }
 
           try {
+            const cleanupStartedAt = Date.now()
             await removeEmptyDirectories(outDir)
+            if (debug) {
+              debugEntries.push({
+                label: '清理空目录',
+                durationMs: Date.now() - cleanupStartedAt,
+              })
+            }
           } catch (error) {
             console.warn(`${getLogSymbol('warning')} 清理空目录失败: ${error}`)
           }
@@ -511,11 +589,26 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             ),
           )
 
+          if (debug) {
+            debugEntries.push({
+              label: '总耗时',
+              durationMs: Date.now() - startTime,
+            })
+            console.log(renderDebugPanel(debugEntries))
+          }
+
           if (failedCount > 0 && failOnError) {
             throw new Error(`Failed to upload ${failedCount} of ${results.length} files`)
           }
         } catch (error) {
           console.log(`\n${getLogSymbol('danger')} 上传过程中发生错误: ${error}\n`)
+          if (debug && debugEntries.length > 0) {
+            debugEntries.push({
+              label: '失败前耗时',
+              durationMs: Date.now() - startTime,
+            })
+            console.log(renderDebugPanel(debugEntries))
+          }
           if (failOnError) {
             throw error instanceof Error ? error : new Error(String(error))
           }

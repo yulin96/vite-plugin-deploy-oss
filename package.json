@@ -25,7 +25,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build:test": "cd playground && vite build",
-    "build:test:deploy": "cd playground && vite build --mode deploy"
+    "build:test:deploy": "cd playground && vite build --mode deploy",
+    "build:test:debug": "cd playground && vite build --mode deploy-debug"
   },
   "keywords": [
     "vite-plugin",

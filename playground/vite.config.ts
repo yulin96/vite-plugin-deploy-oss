@@ -2,12 +2,14 @@ import { defineConfig } from 'vite'
 import vitePluginDeployOss from '../src'
 
 export default defineConfig(({ mode }) => {
-  const shouldDeploy = mode === 'deploy' || process.env.DEPLOY_OSS === '1'
+  const shouldDeploy = mode === 'deploy' || mode === 'deploy-debug' || process.env.DEPLOY_OSS === '1'
+  const isDebug = mode === 'debug' || mode === 'deploy-debug' || process.env.DEPLOY_OSS_DEBUG === '1'
 
   return {
     plugins: [
       vitePluginDeployOss({
         open: shouldDeploy,
+        debug: isDebug,
 
         accessKeyId: process.env.zAccessKeyId || '',
         accessKeySecret: process.env.zAccessKeySecret || '',
