@@ -16,7 +16,7 @@ import {
   resolveUploadedFileUrl,
 } from './utils/path'
 import { formatBytes, formatDuration } from './utils/progress'
-import { getLogSymbol, renderInlineStats, renderPanel, truncateTerminalText } from './utils/terminal'
+import { getLogSymbol, getPanelDot, renderInlineStats, renderPanel, truncateTerminalText } from './utils/terminal'
 export type {
   ManifestConfig,
   ManifestFileItem,
@@ -54,7 +54,7 @@ const renderDebugPanel = (entries: DebugTimingEntry[]): string => {
     ),
   }))
 
-  return renderPanel('调试耗时', rows, 'info')
+  return renderPanel(`${getPanelDot('success')} 调试耗时`, rows, 'info')
 }
 
 const createManifestPayload = async (
@@ -444,7 +444,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         clearViewport()
         console.log(
           renderPanel(
-            '准备部署',
+            `${getPanelDot('success')} 准备部署`,
             [
               { label: '位置:', value: chalk.green(`${bucket} · ${region}`) },
               {
@@ -583,7 +583,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
           console.log(
             renderPanel(
-              failedCount === 0 ? `${getLogSymbol('success')} 部署完成` : `${getLogSymbol('warning')} 部署完成`,
+              failedCount === 0 ? `${getPanelDot('success')} 部署完成` : `${getPanelDot('warning')} 部署完成`,
               resultRows,
               failedCount === 0 ? 'success' : 'warning',
             ),
