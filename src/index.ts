@@ -110,6 +110,9 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
   const normalizedUploadDir = normalizePathSegments(uploadDir)
   const normalizedConfigBase = configBase ? ensureTrailingSlash(normalizeUrlLikeBase(configBase)) : undefined
   const normalizedAlias = alias ? normalizeUrlLikeBase(alias) : undefined
+  const manifestFileName = resolveManifestFileName(manifest)
+  const effectiveAutoDelete = manifestFileName ? false : autoDelete
+  const effectiveSkip = manifestFileName ? [] : Array.isArray(skip) ? skip : [skip]
 
   let buildFailed = false
 
@@ -169,7 +172,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
             })
 
         if (result.res.status === 200) {
-          if (autoDelete) {
+          if (effectiveAutoDelete) {
             try {
               await unlink(task.filePath)
             } catch (error) {
@@ -399,8 +402,7 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
 
       const validationErrors = validateOptions()
       if (validationErrors.length > 0) {
-        console.log(`${chalk.red('✗ 配置错误:')}\n${validationErrors.map((err) => `  - ${err}`).join('\n')}`)
-        return
+        throw new Error(`vite-plugin-deploy-oss 配置错误:\n${validationErrors.map((err) => `  - ${err}`).join('\n')}`)
       }
 
       upload = true
@@ -420,13 +422,12 @@ export default function vitePluginDeployOss(option: vitePluginDeployOssOption): 
         const startTime = Date.now()
         const debugEntries: DebugTimingEntry[] = []
         const client = new oss({ region, accessKeyId, accessKeySecret, secure, bucket, ...props })
-        const manifestFileName = resolveManifestFileName(manifest)
 
         const collectFilesStartedAt = Date.now()
         const files = globSync('**/*', {
           cwd: outDir,
           nodir: true,
-          ignore: Array.isArray(skip) ? skip : [skip],
+          ignore: effectiveSkip,
         })
           .map((file) => normalizePath(file))
           .filter((file) => file !== manifestFileName)

@@ -1,10 +1,6 @@
 # vite-plugin-deploy-oss
 
-将 dist 目录上传到 OSS
-
-## 介绍
-
-`vite-plugin-deploy-oss` 是一个 Vite 插件，它可以将你的 dist 目录上传到 OSS 上。
+把 Vite 打包后的文件上传到阿里云 OSS。
 
 ## 安装
 
@@ -12,64 +8,92 @@
 pnpm add vite-plugin-deploy-oss -D
 ```
 
-## 调试模式
+## 快速开始
 
-```bash
-pnpm run build:test:debug
-```
-
-这会进入带调试信息的上传模式，构建结束后额外输出每个关键步骤花了多久。
-
-## 使用
+推荐用环境变量控制上传，避免本地随手打包时误上传。
 
 ```ts
 // vite.config.ts
+import { defineConfig } from 'vite'
 import vitePluginDeployOss from 'vite-plugin-deploy-oss'
 
-// ...existing code...
-export default {
-  // ...existing code...
+export default defineConfig({
   plugins: [
-    // 在最后一个插件中使用
     vitePluginDeployOss({
-      // 建议按环境变量开关上传，避免本地/CI误上传
       open: process.env.DEPLOY_OSS === '1',
-      // 输出调试耗时信息，方便排查慢在哪里
-      debug: process.env.DEPLOY_OSS_DEBUG === '1',
-      // 终端实时动效进度面板（默认 true）
-      fancy: true,
 
-      accessKeyId: '***',
-      accessKeySecret: '***',
-      bucket: '***',
-      region: '***',
-      uploadDir: `H5/zz/test`,
-      skip: ['**/index.html'],
+      accessKeyId: process.env.OSS_ACCESS_KEY_ID || '',
+      accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET || '',
+      bucket: process.env.OSS_BUCKET || '',
+      region: process.env.OSS_REGION || '',
 
-      // 默认 true：有上传失败时抛错并让构建失败
-      failOnError: true,
+      uploadDir: 'H5/demo/prod',
+      configBase: 'https://example.com/H5/demo/prod/',
 
-      // 生成并上传 OSS 汇总文件
       manifest: true,
-
-      // 修改打包后的资源路径
-      configBase: `https://oss.eventnet.cn/H5/zz/test/`,
+      failOnError: true,
     }),
   ],
-}
+})
 ```
 
-## 说明
+发布时执行：
 
-- 当前版本仅支持 ESM（`import`），不再提供 CommonJS（`require`）入口。
-- `open` 默认 `true`，建议通过环境变量控制开关（例如 `DEPLOY_OSS=1` 时再上传）。
-- `debug` 默认关闭。开启后会在结束时额外输出每个关键步骤花了多久，方便排查慢点和卡点。
-- `fancy` 默认 `true`，TTY 终端下会显示实时动效进度（速度、预计剩余、并发、当前文件）。
-- `failOnError` 默认 `true`，上传有失败会抛错，适合 CI 场景保证发布质量。
-- `manifest` 默认关闭。开启后会在构建目录生成并上传 `oss-manifest.json`。
-- `manifest: true` 时默认文件名为 `oss-manifest.json`，也支持 `manifest: { fileName: 'meta/oss-manifest.json' }` 自定义路径。
-- `oss-manifest.json` 仅包含本次成功上传的文件，不包含汇总文件自身。
-- `oss-manifest.json` 内容示例：
+```bash
+DEPLOY_OSS=1 pnpm build
+```
+
+## 常用配置
+
+| 配置              | 默认值            | 说明                               |
+| ----------------- | ----------------- | ---------------------------------- |
+| `open`            | `true`            | 是否开启上传。建议用环境变量控制。 |
+| `accessKeyId`     | -                 | OSS 访问密钥。                     |
+| `accessKeySecret` | -                 | OSS 访问密钥。                     |
+| `bucket`          | -                 | OSS bucket 名称。                  |
+| `region`          | -                 | OSS 区域，例如 `oss-cn-beijing`。  |
+| `uploadDir`       | -                 | 文件上传到 OSS 的目标目录。        |
+| `configBase`      | -                 | 同步修改 Vite 的资源访问路径。     |
+| `skip`            | `'**/index.html'` | 不上传的文件规则。                 |
+| `overwrite`       | `true`            | 是否允许覆盖远端同名文件。         |
+| `autoDelete`      | `false`           | 上传成功后是否删除本地构建文件。   |
+| `manifest`        | `false`           | 是否生成并上传文件清单。           |
+| `failOnError`     | `true`            | 上传失败时是否中断构建。           |
+| `debug`           | `false`           | 是否输出耗时信息。                 |
+| `fancy`           | `true`            | 是否显示更友好的终端进度。         |
+
+## 重要行为
+
+- `open: true` 时，如果缺少 `accessKeyId`、`accessKeySecret`、`bucket`、`region` 或 `uploadDir`，会直接中断构建。
+- `manifest` 开启后，会自动上传全部文件，并自动保留本地构建文件。
+- `manifest` 开启后，`skip` 会按空数组处理，`autoDelete` 会按 `false` 处理。
+- `oss-manifest.json` 只记录本次成功上传的文件，不包含清单文件自身。
+- `configBase` 会影响 Vite 打包后的资源路径，也会影响清单里的访问地址。
+- `alias` 只影响清单里生成的访问地址，不会改变实际上传路径。
+
+## Manifest
+
+开启：
+
+```ts
+vitePluginDeployOss({
+  // ...其他配置
+  manifest: true,
+})
+```
+
+自定义文件名：
+
+```ts
+vitePluginDeployOss({
+  // ...其他配置
+  manifest: {
+    fileName: 'meta/oss-manifest.json',
+  },
+})
+```
+
+清单内容示例：
 
 ```json
 {
@@ -77,10 +101,34 @@ export default {
   "files": [
     {
       "file": "assets/index-abc123.js",
-      "key": "H5/zz/test/assets/index-abc123.js",
-      "url": "https://oss.eventnet.cn/H5/zz/test/assets/index-abc123.js",
+      "key": "H5/demo/prod/assets/index-abc123.js",
+      "url": "https://example.com/H5/demo/prod/assets/index-abc123.js",
       "md5": "d41d8cd98f00b204e9800998ecf8427e"
     }
   ]
 }
 ```
+
+## 调试
+
+开启 `debug` 后，构建结束会额外输出关键步骤耗时，方便判断慢在哪里。
+
+```ts
+vitePluginDeployOss({
+  // ...其他配置
+  debug: process.env.DEPLOY_OSS_DEBUG === '1',
+})
+```
+
+也可以使用项目内的 playground 命令：
+
+```bash
+pnpm run build:test:debug
+```
+
+## 注意事项
+
+- 建议不要在配置里直接写真实密钥，优先使用环境变量。
+- 建议生产发布时保持 `failOnError: true`，避免部分文件没上传却继续完成流程。
+- 如果开启 `autoDelete`，请确认不需要保留本地构建文件。
+- 当前版本仅支持 ESM，也就是 `import` 用法，不提供 `require` 入口。
