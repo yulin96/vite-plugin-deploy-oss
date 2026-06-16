@@ -1,16 +1,20 @@
 # vite-plugin-deploy-oss
 
-把 Vite 打包后的文件上传到阿里云 OSS。
+[![npm version](https://img.shields.io/npm/v/vite-plugin-deploy-oss.svg?style=flat-square)](https://www.npmjs.com/package/vite-plugin-deploy-oss)
+[![npm downloads](https://img.shields.io/npm/dm/vite-plugin-deploy-oss.svg?style=flat-square)](https://www.npmjs.com/package/vite-plugin-deploy-oss)
+[![npm license](https://img.shields.io/npm/l/vite-plugin-deploy-oss.svg?style=flat-square)](https://www.npmjs.com/package/vite-plugin-deploy-oss)
 
-## 安装
+Upload Vite build artifacts to Aliyun OSS.
+
+## Installation
 
 ```bash
 pnpm add vite-plugin-deploy-oss -D
 ```
 
-## 快速开始
+## Quick Start
 
-推荐用环境变量控制上传，避免本地随手打包时误上传。
+It is recommended to control the deployment using environment variables to avoid accidental uploads during local builds.
 
 ```ts
 // vite.config.ts
@@ -37,63 +41,63 @@ export default defineConfig({
 })
 ```
 
-发布时执行：
+Run build and deploy:
 
 ```bash
 DEPLOY_OSS=1 pnpm build
 ```
 
-## 常用配置
+## Configuration
 
-| 配置              | 默认值            | 说明                               |
-| ----------------- | ----------------- | ---------------------------------- |
-| `open`            | `true`            | 是否开启上传。建议用环境变量控制。 |
-| `accessKeyId`     | -                 | OSS 访问密钥。                     |
-| `accessKeySecret` | -                 | OSS 访问密钥。                     |
-| `bucket`          | -                 | OSS bucket 名称。                  |
-| `region`          | -                 | OSS 区域，例如 `oss-cn-beijing`。  |
-| `uploadDir`       | -                 | 文件上传到 OSS 的目标目录。        |
-| `configBase`      | -                 | 同步修改 Vite 的资源访问路径。     |
-| `skip`            | `'**/index.html'` | 不上传的文件规则。                 |
-| `overwrite`       | `true`            | 是否允许覆盖远端同名文件。         |
-| `autoDelete`      | `false`           | 上传成功后是否删除本地构建文件。   |
-| `manifest`        | `false`           | 是否生成并上传文件清单。           |
-| `failOnError`     | `true`            | 上传失败时是否中断构建。           |
-| `debug`           | `false`           | 是否输出耗时信息。                 |
-| `fancy`           | `true`            | 是否显示更友好的终端进度。         |
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `open` | `true` | Whether to enable upload. Recommended to control with environment variables. |
+| `accessKeyId` | - | OSS access key ID. |
+| `accessKeySecret` | - | OSS access key secret. |
+| `bucket` | - | OSS bucket name. |
+| `region` | - | OSS region, e.g., `oss-cn-beijing`. |
+| `uploadDir` | - | Target directory in OSS to upload files. |
+| `configBase` | - | Modifies Vite's asset base path synchronously. |
+| `skip` | `'**/index.html'` | Glob pattern for files to skip uploading. |
+| `overwrite` | `true` | Whether to overwrite existing files on OSS with the same name. |
+| `autoDelete` | `false` | Whether to delete local build files after successful upload. |
+| `manifest` | `false` | Whether to generate and upload a build manifest file. |
+| `failOnError` | `true` | Whether to abort the build process if upload fails. |
+| `debug` | `false` | Whether to output time cost information for debugging. |
+| `fancy` | `true` | Whether to display a styled terminal progress bar. |
 
-## 重要行为
+## Important Behaviors
 
-- `open: true` 时，如果缺少 `accessKeyId`、`accessKeySecret`、`bucket`、`region` 或 `uploadDir`，会直接中断构建。
-- `manifest` 开启后，会自动上传全部文件，并自动保留本地构建文件。
-- `manifest` 开启后，`skip` 会按空数组处理，`autoDelete` 会按 `false` 处理。
-- `oss-manifest.json` 只记录本次成功上传的文件，不包含清单文件自身。
-- `configBase` 会影响 Vite 打包后的资源路径，也会影响清单里的访问地址。
-- `alias` 只影响清单里生成的访问地址，不会改变实际上传路径。
+- If `open: true` and any of the required options (`accessKeyId`, `accessKeySecret`, `bucket`, `region`, or `uploadDir`) are missing, the build process will fail and terminate.
+- When `manifest` is enabled, all built files are uploaded automatically, and local build files are retained.
+- When `manifest` is enabled, `skip` defaults to an empty array and `autoDelete` is forced to `false`.
+- `oss-manifest.json` only tracks successfully uploaded files in the current build and does not include the manifest file itself.
+- `configBase` affects both Vite's output asset paths and the URL addresses inside the manifest.
+- `alias` only affects the URLs generated inside the manifest; it does not change the actual upload destination on OSS.
 
 ## Manifest
 
-开启：
+Enable manifest:
 
 ```ts
 vitePluginDeployOss({
-  // ...其他配置
+  // ...other options
   manifest: true,
 })
 ```
 
-自定义文件名：
+Customize manifest filename:
 
 ```ts
 vitePluginDeployOss({
-  // ...其他配置
+  // ...other options
   manifest: {
     fileName: 'meta/oss-manifest.json',
   },
 })
 ```
 
-清单内容示例：
+Manifest JSON example:
 
 ```json
 {
@@ -109,26 +113,26 @@ vitePluginDeployOss({
 }
 ```
 
-## 调试
+## Debugging
 
-开启 `debug` 后，构建结束会额外输出关键步骤耗时，方便判断慢在哪里。
+Enable `debug` to log the time taken for each key step during deployment, which helps locate bottlenecks:
 
 ```ts
 vitePluginDeployOss({
-  // ...其他配置
+  // ...other options
   debug: process.env.DEPLOY_OSS_DEBUG === '1',
 })
 ```
 
-也可以使用项目内的 playground 命令：
+You can also run the playground command in the project:
 
 ```bash
 pnpm run build:test:debug
 ```
 
-## 注意事项
+## Notes
 
-- 建议不要在配置里直接写真实密钥，优先使用环境变量。
-- 建议生产发布时保持 `failOnError: true`，避免部分文件没上传却继续完成流程。
-- 如果开启 `autoDelete`，请确认不需要保留本地构建文件。
-- 当前版本仅支持 ESM，也就是 `import` 用法，不提供 `require` 入口。
+- It is highly recommended to use environment variables instead of hardcoding sensitive credentials.
+- Keep `failOnError: true` for production builds to avoid completing the build/deployment pipeline when some files failed to upload.
+- Make sure you do not need the local build directory before enabling `autoDelete`.
+- The current version only supports ESM (`import` syntax). CommonJS (`require`) is not supported.

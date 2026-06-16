@@ -39,7 +39,7 @@
   ],
   "author": "yulinzhao",
   "license": "MIT",
-  "description": "将dist目录下的文件上传到阿里云oss",
+  "description": "Upload Vite build artifacts to Aliyun OSS.",
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",
     "@types/node": "^22.19.19",
