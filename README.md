@@ -47,24 +47,83 @@ Run build and deploy:
 DEPLOY_OSS=1 pnpm build
 ```
 
+## Direct Upload
+
+If you only want to upload an existing directory, use the built-in CLI. This does not require Vite.
+
+Create a config file:
+
+```js
+// deploy-oss.config.mjs
+import { defineDeployConfig } from 'vite-plugin-deploy-oss'
+
+export default defineDeployConfig({
+  accessKeyId: process.env.OSS_ACCESS_KEY_ID || '',
+  accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET || '',
+  bucket: process.env.OSS_BUCKET || '',
+  region: process.env.OSS_REGION || '',
+
+  outDir: 'dist',
+  uploadDir: 'H5/demo/prod',
+  configBase: 'https://example.com/H5/demo/prod/',
+
+  manifest: true,
+  failOnError: true,
+})
+```
+
+Run it from package scripts:
+
+```json
+{
+  "scripts": {
+    "deploy": "deploy-oss --config deploy-oss.config.mjs"
+  }
+}
+```
+
+Or run it with npx:
+
+```bash
+npx vite-plugin-deploy-oss --config deploy-oss.config.mjs
+```
+
+You can also call the upload API directly:
+
+```ts
+import { deployOss } from 'vite-plugin-deploy-oss/deploy'
+
+await deployOss({
+  accessKeyId: process.env.OSS_ACCESS_KEY_ID || '',
+  accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET || '',
+  bucket: process.env.OSS_BUCKET || '',
+  region: process.env.OSS_REGION || '',
+  outDir: 'dist',
+  uploadDir: 'H5/demo/prod',
+})
+```
+
+`configBase` only changes URLs written to the manifest in direct upload mode. If you need Vite output paths to use the same base, keep using the Vite plugin during build.
+
 ## Configuration
 
-| Option | Default | Description |
-| :--- | :--- | :--- |
-| `open` | `true` | Whether to enable upload. Recommended to control with environment variables. |
-| `accessKeyId` | - | OSS access key ID. |
-| `accessKeySecret` | - | OSS access key secret. |
-| `bucket` | - | OSS bucket name. |
-| `region` | - | OSS region, e.g., `oss-cn-beijing`. |
-| `uploadDir` | - | Target directory in OSS to upload files. |
-| `configBase` | - | Modifies Vite's asset base path synchronously. |
-| `skip` | `'**/index.html'` | Glob pattern for files to skip uploading. |
-| `overwrite` | `true` | Whether to overwrite existing files on OSS with the same name. |
-| `autoDelete` | `false` | Whether to delete local build files after successful upload. |
-| `manifest` | `false` | Whether to generate and upload a build manifest file. |
-| `failOnError` | `true` | Whether to abort the build process if upload fails. |
-| `debug` | `false` | Whether to output time cost information for debugging. |
-| `fancy` | `true` | Whether to display a styled terminal progress bar. |
+| Option            | Default           | Description                                                                  |
+| :---------------- | :---------------- | :--------------------------------------------------------------------------- |
+| `open`            | `true`            | Whether to enable upload. Recommended to control with environment variables. |
+| `accessKeyId`     | -                 | OSS access key ID.                                                           |
+| `accessKeySecret` | -                 | OSS access key secret.                                                       |
+| `bucket`          | -                 | OSS bucket name.                                                             |
+| `region`          | -                 | OSS region, e.g., `oss-cn-beijing`.                                          |
+| `outDir`          | `'dist'`          | Local directory to upload when using CLI or direct API.                      |
+| `uploadDir`       | -                 | Target directory in OSS to upload files.                                     |
+| `configBase`      | -                 | Modifies Vite's asset base path synchronously.                               |
+| `skip`            | `'**/index.html'` | Glob pattern for files to skip uploading.                                    |
+| `overwrite`       | `true`            | Whether to overwrite existing files on OSS with the same name.               |
+| `autoDelete`      | `false`           | Whether to delete local build files after successful upload.                 |
+| `manifest`        | `false`           | Whether to generate and upload a build manifest file.                        |
+| `failOnError`     | `true`            | Whether to abort the build process if upload fails.                          |
+| `debug`           | `false`           | Whether to output time cost information for debugging.                       |
+| `fancy`           | `true`            | Whether to display a styled terminal progress bar.                           |
 
 ## Important Behaviors
 

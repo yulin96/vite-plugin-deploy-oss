@@ -37,6 +37,20 @@ export interface vitePluginDeployOssOption extends Omit<
   manifest?: ManifestConfig
 }
 
+export interface DeployOssOption extends vitePluginDeployOssOption {
+  outDir?: string
+}
+
+export interface DeployOssResult {
+  success: boolean
+  results: UploadResult[]
+  outDir: string
+  durationSeconds: number
+  uploadedBytes: number
+  retryCount: number
+  manifestUrl?: string
+}
+
 export interface UploadResult {
   success: boolean
   file: string
