@@ -189,6 +189,33 @@ You can also run the playground command in the project:
 pnpm run build:test:debug
 ```
 
+## Local Upload Tests
+
+The playground includes three upload test paths:
+
+```bash
+# Vite plugin upload
+pnpm run build:test:deploy
+
+# Direct API upload
+pnpm run deploy:test:api
+
+# CLI upload
+pnpm run deploy:test:cli
+```
+
+All three commands use the same environment variables as the playground:
+
+```bash
+zAccessKeyId=xxx
+zAccessKeySecret=xxx
+zBucket=xxx
+zBucketAlias=https://example.com
+```
+
+The direct API test uploads `playground/__dist__` to `/test/__direct-api__/`.
+The CLI test uploads `playground/__dist__` to `/test/__direct-cli__/`.
+
 ## Notes
 
 - It is highly recommended to use environment variables instead of hardcoding sensitive credentials.

@@ -33,7 +33,9 @@
     "format:check": "prettier --check .",
     "build:test": "cd playground && vite build",
     "build:test:deploy": "cd playground && vite build --mode deploy",
-    "build:test:debug": "cd playground && vite build --mode deploy-debug"
+    "build:test:debug": "cd playground && vite build --mode deploy-debug",
+    "deploy:test:api": "pnpm run build && pnpm run build:test && node playground/deploy-api.mjs",
+    "deploy:test:cli": "pnpm run build && pnpm run build:test && node dist/cli.js --config playground/deploy-oss.config.mjs"
   },
   "keywords": [
     "vite-plugin",
